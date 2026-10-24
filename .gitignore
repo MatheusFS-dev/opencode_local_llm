@@ -1,3 +1,6 @@
 # Agent workspace template
 docs/superpowers/specs/
 docs/superpowers/plans/
+src/local-setup
+
+src/downloader/local-downloader
