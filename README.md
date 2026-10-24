@@ -48,7 +48,17 @@ The script installs the latest stable Go release from official metadata when nee
 
 Omit the path to use the current directory. On-demand mode starts Ollama for the command and stops it when OpenCode exits. Persistent mode uses the configured service. Inside OpenCode, use `/models` and select `ollama/huihui_ai/qwen3.5-abliterated:4B`.
 
-You can also run OpenCode directly when the persistent Ollama service is running. From your project directory:
+> [!IMPORTANT]
+> In on-demand mode, always start OpenCode with `./src/run.sh`. Running `opencode` directly does not start Ollama. If OpenCode retries with `ECONNREFUSED: Unable to connect`, no Ollama server is listening on `127.0.0.1:11434`; exit OpenCode and start it through `./src/run.sh`.
+
+To run OpenCode directly, first switch to persistent mode and confirm that Ollama is listening:
+
+```bash
+./src/service.sh persistent
+./src/service.sh status
+```
+
+The status output must show `Mode: persistent` and `Port: ollama`. Then, from your project directory, you can use:
 
 ```bash
 opencode
