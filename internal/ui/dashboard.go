@@ -51,7 +51,7 @@ var actionLabels = []string{
 	"Start managed Ollama server",
 	"Download a model",
 	"Choose default model",
-	"OpenCode session",
+	"Start OpenCode session",
 	"Stop managed Ollama server",
 	"Delete a model",
 	"Reset local configuration",
