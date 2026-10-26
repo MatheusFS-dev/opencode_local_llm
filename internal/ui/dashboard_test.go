@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -48,10 +49,13 @@ func TestDashboardScrollsToKeepTheSelectedActionVisible(t *testing.T) {
 		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	view := dashboard.View().Content
-	for _, expected := range []string{"Reset local configuration", "↑ more"} {
+	for _, expected := range []string{"Reset local configuration"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("short view missing %q after selecting the final action:\n%s", expected, view)
 		}
+	}
+	if !regexp.MustCompile(`↑ [1-9][0-9]* more`).MatchString(view) {
+		t.Fatalf("short view must show the number of hidden lines above:\n%s", view)
 	}
 }
 

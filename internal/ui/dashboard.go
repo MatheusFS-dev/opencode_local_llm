@@ -344,11 +344,12 @@ func (dashboard *Dashboard) viewport(content string, focusLine int) (string, str
 	indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(dashboard.width).PaddingLeft(2)
 	above := ""
 	if !window.AtTop() {
-		above = indicator.Render("↑ more")
+		above = indicator.Render(fmt.Sprintf("↑ %d more", window.YOffset()))
 	}
 	below := ""
 	if !window.AtBottom() {
-		below = indicator.Render("↓ more")
+		hiddenLines := window.TotalLineCount() - window.YOffset() - window.VisibleLineCount()
+		below = indicator.Render(fmt.Sprintf("↓ %d more", max(1, hiddenLines)))
 	}
 	return window.View(), above, below
 }
