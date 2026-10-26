@@ -161,11 +161,14 @@ func TestDashboardStacksPanelsInNarrowTerminal(t *testing.T) {
 	}
 }
 
-func TestDashboardShowsOverviewBeforeResourcesInWideTerminal(t *testing.T) {
+func TestDashboardPlacesStatusPanelsSideBySideInWideTerminal(t *testing.T) {
 	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, nil)
 	dashboard.Resize(120, 40)
 	view := dashboard.View().Content
-	if strings.Index(view, "OVERVIEW") > strings.Index(view, "RESOURCES") {
-		t.Fatalf("wide view must show overview before resources:\n%s", view)
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "OVERVIEW") && strings.Contains(line, "RESOURCES") {
+			return
+		}
 	}
+	t.Fatalf("wide view must place overview and resources side by side:\n%s", view)
 }

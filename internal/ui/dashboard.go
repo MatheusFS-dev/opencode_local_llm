@@ -421,10 +421,11 @@ func (dashboard *Dashboard) View() tea.View {
 	}
 	hints := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(width).Align(lipgloss.Center).Render("↑/↓ Navigate  •  Enter select  •  Esc back  •  q quit")
 	overview, resources := dashboard.statusPanels(width)
+	status := strings.TrimSuffix(strings.Join([]string{overview, resources}, "\n"), "\n")
 	actions, actionLine := dashboard.actionList()
-	fixedHeight := lipgloss.Height(strings.Join([]string{title, hints, overview, resources}, "\n"))
+	fixedHeight := lipgloss.Height(strings.Join([]string{title, hints, status}, "\n"))
 	body, above, below := dashboard.actionViewport(actions, actionLine, max(1, dashboard.height-fixedHeight-2))
-	view := tea.NewView(strings.Join([]string{title, hints, overview, resources, above, body, below}, "\n"))
+	view := tea.NewView(strings.Join([]string{title, hints, status, above, body, below}, "\n"))
 	view.AltScreen = true
 	view.WindowTitle = "Local LLM"
 	return view
@@ -513,10 +514,15 @@ func (dashboard *Dashboard) actionIndex(target action) int {
 }
 
 func (dashboard *Dashboard) statusPanels(width int) (string, string) {
-	overview := dashboard.panel("OVERVIEW", fmt.Sprintf("Server: %s\nSelected: %s\nContext: %d tokens\nStorage: %s", empty(dashboard.snapshot.Server), empty(dashboard.config.SelectedModel), dashboard.config.ContextLength, dashboard.config.ModelDirectory), width)
-	resources := dashboard.panel("RESOURCES", fmt.Sprintf("%s\nLoaded model VRAM: %s", empty(dashboard.snapshot.GPU), empty(dashboard.snapshot.LoadedVRAM)), width)
+	overviewBody := fmt.Sprintf("Server: %s\nSelected: %s\nContext: %d tokens\nStorage: %s", empty(dashboard.snapshot.Server), empty(dashboard.config.SelectedModel), dashboard.config.ContextLength, dashboard.config.ModelDirectory)
+	resourcesBody := fmt.Sprintf("%s\nLoaded model VRAM: %s", empty(dashboard.snapshot.GPU), empty(dashboard.snapshot.LoadedVRAM))
 	if dashboard.height >= 19 {
-		return overview, resources
+		if width >= 80 {
+			overviewWidth := (width - 1) / 2
+			resourcesWidth := width - overviewWidth - 1
+			return lipgloss.JoinHorizontal(lipgloss.Top, dashboard.panel("OVERVIEW", overviewBody, overviewWidth), " ", dashboard.panel("RESOURCES", resourcesBody, resourcesWidth)), ""
+		}
+		return dashboard.panel("OVERVIEW", overviewBody, width), dashboard.panel("RESOURCES", resourcesBody, width)
 	}
 	return dashboard.statusLine("OVERVIEW", "Server: "+empty(dashboard.snapshot.Server)), dashboard.statusLine("RESOURCES", empty(dashboard.snapshot.GPU))
 }
