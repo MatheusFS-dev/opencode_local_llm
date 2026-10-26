@@ -321,20 +321,38 @@ func (dashboard *Dashboard) View() tea.View {
 	width := dashboard.width
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Width(width).Align(lipgloss.Center).Render("LOCAL LLM")
 	hints := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(width).Align(lipgloss.Center).Render("↑/↓ Navigate  •  Enter select  •  Esc back  •  q quit")
-	overview := dashboard.panel("OVERVIEW", fmt.Sprintf("Server: %s\nSelected: %s\nContext: %d tokens\nStorage: %s", empty(dashboard.snapshot.Server), empty(dashboard.config.SelectedModel), dashboard.config.ContextLength, dashboard.config.ModelDirectory), width)
-	resources := dashboard.panel("RESOURCES", fmt.Sprintf("%s\nLoaded model VRAM: %s", empty(dashboard.snapshot.GPU), empty(dashboard.snapshot.LoadedVRAM)), width)
+	overview, resources := dashboard.statusPanels(width)
 	actions, actionLine := dashboard.actionList()
-	page := strings.Join([]string{overview, resources, actions}, "\n")
-	focusLine := lipgloss.Height(overview) + lipgloss.Height(resources) + 2 + actionLine
-	body, above, below := dashboard.viewport(page, focusLine)
-	view := tea.NewView(strings.Join([]string{title, hints, above, body, below}, "\n"))
+	fixedHeight := lipgloss.Height(strings.Join([]string{title, hints, overview, resources}, "\n"))
+	body, above, below := dashboard.actionViewport(actions, actionLine, max(1, dashboard.height-fixedHeight-2))
+	view := tea.NewView(strings.Join([]string{title, hints, overview, resources, above, body, below}, "\n"))
 	view.AltScreen = true
 	view.WindowTitle = "Local LLM"
 	return view
 }
 
-func (dashboard *Dashboard) viewport(content string, focusLine int) (string, string, string) {
-	height := max(1, dashboard.height-4)
+func (dashboard *Dashboard) statusPanels(width int) (string, string) {
+	overview := dashboard.panel("OVERVIEW", fmt.Sprintf("Server: %s\nSelected: %s\nContext: %d tokens\nStorage: %s", empty(dashboard.snapshot.Server), empty(dashboard.config.SelectedModel), dashboard.config.ContextLength, dashboard.config.ModelDirectory), width)
+	resources := dashboard.panel("RESOURCES", fmt.Sprintf("%s\nLoaded model VRAM: %s", empty(dashboard.snapshot.GPU), empty(dashboard.snapshot.LoadedVRAM)), width)
+	if dashboard.height >= 19 {
+		return overview, resources
+	}
+	return dashboard.statusLine("OVERVIEW", "Server: "+empty(dashboard.snapshot.Server)), dashboard.statusLine("RESOURCES", empty(dashboard.snapshot.GPU))
+}
+
+func (dashboard *Dashboard) statusLine(title, value string) string {
+	firstLine := strings.Split(value, "\n")[0]
+	maximum := max(8, dashboard.width-len(title)-4)
+	runes := []rune(firstLine)
+	if len(runes) > maximum {
+		firstLine = string(runes[:maximum-1]) + "…"
+	}
+	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(title)
+	detail := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  " + firstLine)
+	return heading + detail
+}
+
+func (dashboard *Dashboard) actionViewport(content string, focusLine, height int) (string, string, string) {
 	window := viewport.New(viewport.WithWidth(dashboard.width), viewport.WithHeight(height))
 	window.FillHeight = true
 	window.SetContent(content)

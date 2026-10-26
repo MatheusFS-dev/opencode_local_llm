@@ -49,7 +49,7 @@ func TestDashboardScrollsToKeepTheSelectedActionVisible(t *testing.T) {
 		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	view := dashboard.View().Content
-	for _, expected := range []string{"Reset local configuration"} {
+	for _, expected := range []string{"OVERVIEW", "RESOURCES", "Reset local configuration"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("short view missing %q after selecting the final action:\n%s", expected, view)
 		}
