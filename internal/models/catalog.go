@@ -11,6 +11,7 @@ import (
 type Entry struct {
 	Name string `json:"name"`
 	Size string `json:"size"`
+	VRAM string `json:"vram"`
 }
 
 // Load reads and validates the editable model catalog.

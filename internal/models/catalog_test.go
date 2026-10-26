@@ -3,6 +3,7 @@ package models
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,17 @@ func TestLoadCatalogAcceptsExistingSixModelCatalog(t *testing.T) {
 	}
 	if len(catalog) != 6 {
 		t.Fatalf("models = %d, want 6", len(catalog))
+	}
+}
+
+func TestCatalogIncludesVRAMGuidance(t *testing.T) {
+	path := filepath.Join("..", "..", "src", "models.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"vram":"8 GB for 16–32K context"`) {
+		t.Fatalf("catalog is missing the 4B VRAM guidance:\n%s", data)
 	}
 }
 

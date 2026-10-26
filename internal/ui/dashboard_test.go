@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -74,6 +75,24 @@ func TestDashboardRequiresStorageConfigurationBeforeDownload(t *testing.T) {
 	for _, expected := range []string{"CONFIGURE MODEL STORAGE", "absolute writable directory"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("storage setup screen missing %q:\n%s", expected, view)
+		}
+	}
+}
+
+func TestDashboardShowsLabeledModelRequirements(t *testing.T) {
+	catalog, err := models.Load(filepath.Join("..", "..", "src", "models.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, catalog)
+	dashboard.openPicker(downloadModelAction, catalog)
+	view := dashboard.View().Content
+	for _, expected := range []string{
+		"Estimated download: about 3.3 GB",
+		"VRAM required: 8 GB for 16–32K context",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("download picker missing %q:\n%s", expected, view)
 		}
 	}
 }
@@ -152,7 +171,7 @@ func TestDashboardShowsLiveSnapshotAndInstalledSelection(t *testing.T) {
 		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	_, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if view := dashboard.View().Content; !strings.Contains(view, "installed") {
+	if view := dashboard.View().Content; !strings.Contains(view, "Installed on this machine") {
 		t.Fatalf("model picker must identify installed models:\n%s", view)
 	}
 	_, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

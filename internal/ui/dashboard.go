@@ -457,11 +457,7 @@ func (dashboard *Dashboard) actionScreen() string {
 			lines = append(lines, "No installed models are available.")
 		} else {
 			for index, model := range dashboard.choices {
-				marker := " "
-				if index == dashboard.modelSelected {
-					marker = "›"
-				}
-				lines = append(lines, fmt.Sprintf("%s %s  •  %s", marker, model.Name, model.Size))
+				lines = append(lines, dashboard.modelCard(index, model)...)
 			}
 		}
 		lines = append(lines, "", "[↑/↓] Navigate   [Enter] Continue   [Esc] Back")
@@ -472,6 +468,37 @@ func (dashboard *Dashboard) actionScreen() string {
 		return dashboard.wrap(strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n"))
 	}
 	return ""
+}
+
+func (dashboard *Dashboard) modelCard(index int, model models.Entry) []string {
+	marker := " "
+	if index == dashboard.modelSelected {
+		marker = "›"
+	}
+	lines := dashboard.wrapIndented(marker+" ", model.Name)
+	if model.Size == "installed" {
+		return append(lines, "  Installed on this machine")
+	}
+	if model.Size != "" {
+		lines = append(lines, dashboard.wrapIndented("  Estimated download: ", model.Size)...)
+	}
+	if model.VRAM != "" {
+		lines = append(lines, dashboard.wrapIndented("  VRAM required: ", model.VRAM)...)
+	}
+	return lines
+}
+
+func (dashboard *Dashboard) wrapIndented(prefix, value string) []string {
+	indent := strings.Repeat(" ", lipgloss.Width(prefix))
+	wrapped := strings.Split(lipgloss.Wrap(value, max(1, dashboard.width-lipgloss.Width(prefix)), ""), "\n")
+	for index := range wrapped {
+		if index == 0 {
+			wrapped[index] = prefix + wrapped[index]
+		} else {
+			wrapped[index] = indent + wrapped[index]
+		}
+	}
+	return wrapped
 }
 
 func (dashboard *Dashboard) screenTitle() string {

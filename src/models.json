@@ -1,8 +1,8 @@
 [
-  {"name":"huihui_ai/qwen3.5-abliterated:4B","size":"about 3.3 GB"},
-  {"name":"qwen3.5:4b","size":"3.3–4.0 GB"},
-  {"name":"huihui_ai/gemma-4-abliterated:12b","size":"7.6 GB"},
-  {"name":"gemma4:12b","size":"7.7–8.0 GB"},
-  {"name":"huihui_ai/qwen3.5-abliterated:9b","size":"6.6 GB"},
-  {"name":"qwen3.5:9b","size":"6.6–7.6 GB"}
+  {"name":"huihui_ai/qwen3.5-abliterated:4B","size":"about 3.3 GB","vram":"8 GB for 16–32K context"},
+  {"name":"qwen3.5:4b","size":"3.3–4.0 GB","vram":"8 GB for 16–32K context"},
+  {"name":"huihui_ai/gemma-4-abliterated:12b","size":"7.6 GB","vram":"12 GB for 16–32K context"},
+  {"name":"gemma4:12b","size":"7.7–8.0 GB","vram":"12 GB for 16–32K context"},
+  {"name":"huihui_ai/qwen3.5-abliterated:9b","size":"6.6 GB","vram":"12 GB for 16–32K context, or 8 GB for 4–8K (tight fit)"},
+  {"name":"qwen3.5:9b","size":"6.6–7.6 GB","vram":"12 GB for 16–32K context, or 8 GB for 4–8K (tight fit)"}
 ]
