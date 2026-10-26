@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -23,15 +24,16 @@ type Snapshot struct {
 
 // Actions provides dashboard operations without coupling its view to system APIs.
 type Actions struct {
-	Setup    func() error
-	Start    func() error
-	Stop     func() error
-	Reset    func() (config.Config, error)
-	Download func(string) error
-	Delete   func(string) error
-	Select   func(string) error
-	Launch   func() (*exec.Cmd, error)
-	Refresh  func() Snapshot
+	Setup      func() error
+	Start      func() error
+	Stop       func() error
+	Reset      func() (config.Config, error)
+	SetStorage func(string) (config.Config, error)
+	Download   func(string) error
+	Delete     func(string) error
+	Select     func(string) error
+	Launch     func(string) (*exec.Cmd, error)
+	Refresh    func() Snapshot
 }
 
 type action int
@@ -45,27 +47,41 @@ const (
 	stopServerAction
 	deleteModelAction
 	resetConfigurationAction
+	configureStorageAction
 )
 
 type actionDefinition struct {
 	label   string
 	section string
+	kind    action
 }
 
 var actionDefinitions = []actionDefinition{
-	{label: "Set up Ollama", section: "SETUP"},
-	{label: "Start managed Ollama server", section: "SETUP"},
-	{label: "Download a model", section: "MODELS"},
-	{label: "Choose default model", section: "MODELS"},
-	{label: "Start OpenCode session", section: "WORK"},
-	{label: "Stop managed Ollama server", section: "MAINTENANCE"},
-	{label: "Delete a model", section: "MAINTENANCE"},
-	{label: "Reset local configuration", section: "MAINTENANCE"},
+	{label: "Set up Ollama", section: "SETUP", kind: setupAction},
+	{label: "Start managed Ollama server", section: "SETUP", kind: startServerAction},
+	{label: "Configure model storage", section: "MODELS", kind: configureStorageAction},
+	{label: "Download a model", section: "MODELS", kind: downloadModelAction},
+	{label: "Choose default model", section: "MODELS", kind: selectModelAction},
+	{label: "Delete a model", section: "MODELS", kind: deleteModelAction},
+	{label: "Start OpenCode session", section: "WORK", kind: launchOpenCodeAction},
+	{label: "Stop managed Ollama server", section: "MAINTENANCE", kind: stopServerAction},
+	{label: "Reset local configuration", section: "MAINTENANCE", kind: resetConfigurationAction},
 }
 
+type screen int
+
+const (
+	menuScreen screen = iota
+	confirmScreen
+	pickerScreen
+	storageScreen
+	projectScreen
+)
+
 type operationMsg struct {
-	name string
-	err  error
+	name     string
+	err      error
+	settings *config.Config
 }
 
 type refreshMsg Snapshot
@@ -81,8 +97,10 @@ type Dashboard struct {
 	actionSelected int
 	modelSelected  int
 	pickerAction   action
-	confirmDelete  bool
-	confirmReset   bool
+	choices        []models.Entry
+	activeScreen   screen
+	pendingAction  action
+	input          textinput.Model
 	scrollOffset   int
 	width          int
 	height         int
@@ -90,7 +108,9 @@ type Dashboard struct {
 
 // New creates a dashboard with persisted configuration and optional operations.
 func New(saved config.Config, catalog []models.Entry, actions ...Actions) *Dashboard {
-	dashboard := &Dashboard{config: saved, models: catalog, width: 80, height: 24, activity: "Ready", pickerAction: -1}
+	input := textinput.New()
+	input.SetWidth(72)
+	dashboard := &Dashboard{config: saved, models: catalog, width: 80, height: 24, activity: "Ready", pickerAction: -1, input: input}
 	if len(actions) > 0 {
 		dashboard.actions = actions[0]
 	}
@@ -115,6 +135,9 @@ func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		dashboard.snapshot = Snapshot(value)
 		return dashboard, tea.Tick(time.Second, func(time.Time) tea.Msg { return refreshMsg(dashboard.readSnapshot()) })
 	case operationMsg:
+		if value.err == nil && value.settings != nil {
+			dashboard.config = *value.settings
+		}
 		if value.err != nil {
 			dashboard.activity = fmt.Sprintf("%s failed: %v", value.name, value.err)
 		} else {
@@ -135,34 +158,13 @@ func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if dashboard.confirmDelete {
-		dashboard.confirmDelete = false
-		if value.Code == 'y' {
-			return dashboard, dashboard.operation("Delete model", func() error { return dashboard.callDelete(dashboard.current().Name) })
-		}
-		dashboard.activity = "Delete cancelled"
-		return dashboard, nil
-	}
-	if dashboard.confirmReset {
-		dashboard.confirmReset = false
-		if value.Code != 'y' {
-			dashboard.activity = "Configuration reset cancelled"
-			return dashboard, nil
-		}
-		if dashboard.actions.Reset == nil {
-			dashboard.activity = "Configuration reset is unavailable"
-			return dashboard, nil
-		}
-		return dashboard, func() tea.Msg {
-			settings, err := dashboard.actions.Reset()
-			if err == nil {
-				dashboard.config = settings
-			}
-			return operationMsg{name: "Configuration reset", err: err}
-		}
-	}
-	if dashboard.pickerAction >= 0 {
+	switch dashboard.activeScreen {
+	case confirmScreen:
+		return dashboard.confirm(value)
+	case pickerScreen:
 		return dashboard.pickModel(value)
+	case storageScreen, projectScreen:
+		return dashboard.textEntry(value)
 	}
 	switch value.Code {
 	case 'q':
@@ -186,72 +188,147 @@ func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (dashboard *Dashboard) selectAction() tea.Cmd {
-	switch action(dashboard.actionSelected) {
-	case setupAction:
-		return dashboard.operation("Ollama setup", dashboard.actions.Setup)
-	case startServerAction:
-		return dashboard.operation("Managed Ollama server started", dashboard.actions.Start)
-	case downloadModelAction, selectModelAction, deleteModelAction:
-		dashboard.pickerAction = action(dashboard.actionSelected)
-		dashboard.modelSelected = 0
-		dashboard.activity = "Choose a model and press Enter"
-		return nil
+	switch actionDefinitions[dashboard.actionSelected].kind {
+	case setupAction, startServerAction, stopServerAction, resetConfigurationAction:
+		dashboard.pendingAction = action(dashboard.actionSelected)
+		dashboard.activeScreen = confirmScreen
+	case configureStorageAction:
+		dashboard.openStorage()
+	case downloadModelAction:
+		if dashboard.config.ModelDirectory == "" {
+			dashboard.openStorage()
+			return nil
+		}
+		dashboard.openPicker(downloadModelAction, dashboard.models)
+	case selectModelAction, deleteModelAction:
+		dashboard.openPicker(actionDefinitions[dashboard.actionSelected].kind, dashboard.installedModels())
 	case launchOpenCodeAction:
-		return dashboard.launchOpenCode()
-	case stopServerAction:
-		return dashboard.operation("Managed Ollama server stopped", dashboard.actions.Stop)
-	case resetConfigurationAction:
-		dashboard.confirmReset = true
-		dashboard.activity = "Reset saved configuration and stop the managed server? Press y to confirm"
+		dashboard.openProject()
 	}
 	return nil
+}
+
+func (dashboard *Dashboard) openPicker(kind action, choices []models.Entry) {
+	dashboard.pickerAction = kind
+	dashboard.choices = choices
+	dashboard.modelSelected = 0
+	dashboard.activeScreen = pickerScreen
+}
+
+func (dashboard *Dashboard) openStorage() {
+	dashboard.activeScreen = storageScreen
+	dashboard.input.SetValue(dashboard.config.ModelDirectory)
+	dashboard.input.Focus()
+}
+
+func (dashboard *Dashboard) openProject() {
+	dashboard.activeScreen = projectScreen
+	dashboard.input.SetValue("")
+	dashboard.input.Focus()
 }
 
 func (dashboard *Dashboard) pickModel(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch value.Code {
 	case tea.KeyEscape:
-		dashboard.pickerAction = -1
-		dashboard.activity = "Model selection cancelled"
+		dashboard.activeScreen = menuScreen
 	case tea.KeyUp:
 		if dashboard.modelSelected > 0 {
 			dashboard.modelSelected--
 		}
 	case tea.KeyDown:
-		if dashboard.modelSelected+1 < len(dashboard.models) {
+		if dashboard.modelSelected+1 < len(dashboard.choices) {
 			dashboard.modelSelected++
 		}
 	case tea.KeyEnter:
-		model := dashboard.current().Name
-		switch dashboard.pickerAction {
-		case downloadModelAction:
-			dashboard.pickerAction = -1
-			return dashboard, dashboard.operation("Model download", func() error { return dashboard.callDownload(model) })
-		case selectModelAction:
-			dashboard.pickerAction = -1
-			return dashboard, dashboard.operation("Default model selected", func() error { return dashboard.callSelect(model) })
-		case deleteModelAction:
-			if model != "" {
-				dashboard.confirmDelete = true
-				dashboard.pickerAction = -1
-				dashboard.activity = "Delete " + model + "? Press y to confirm"
-			}
+		if model := dashboard.current().Name; model != "" {
+			dashboard.pendingAction = dashboard.pickerAction
+			dashboard.activeScreen = confirmScreen
 		}
 	}
 	return dashboard, nil
 }
 
-func (dashboard *Dashboard) launchOpenCode() tea.Cmd {
+func (dashboard *Dashboard) confirm(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if value.Code == tea.KeyEscape {
+		dashboard.activeScreen = menuScreen
+		return dashboard, nil
+	}
+	if value.Code != tea.KeyEnter {
+		return dashboard, nil
+	}
+	dashboard.activeScreen = menuScreen
+	model := dashboard.current().Name
+	switch dashboard.pendingAction {
+	case setupAction:
+		return dashboard, dashboard.operation("Ollama setup", dashboard.actions.Setup)
+	case startServerAction:
+		return dashboard, dashboard.operation("Managed Ollama server started", dashboard.actions.Start)
+	case stopServerAction:
+		return dashboard, dashboard.operation("Managed Ollama server stopped", dashboard.actions.Stop)
+	case downloadModelAction:
+		return dashboard, dashboard.operation("Model download", func() error { return dashboard.callDownload(model) })
+	case selectModelAction:
+		return dashboard, dashboard.operation("Default model selected", func() error { return dashboard.callSelect(model) })
+	case deleteModelAction:
+		return dashboard, dashboard.operation("Model deleted", func() error { return dashboard.callDelete(model) })
+	case resetConfigurationAction:
+		return dashboard, dashboard.reset()
+	}
+	return dashboard, nil
+}
+
+func (dashboard *Dashboard) textEntry(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if value.Code == tea.KeyEscape {
+		dashboard.activeScreen = menuScreen
+		return dashboard, nil
+	}
+	if value.Code == tea.KeyEnter {
+		value := strings.TrimSpace(dashboard.input.Value())
+		if value == "" {
+			dashboard.activity = "A folder is required"
+			return dashboard, nil
+		}
+		if dashboard.activeScreen == storageScreen {
+			if dashboard.actions.SetStorage == nil {
+				dashboard.activity = "Storage configuration is unavailable"
+				return dashboard, nil
+			}
+			dashboard.activeScreen = menuScreen
+			return dashboard, func() tea.Msg {
+				settings, err := dashboard.actions.SetStorage(value)
+				return operationMsg{name: "Model storage configured", err: err, settings: &settings}
+			}
+		}
+		return dashboard, dashboard.launchOpenCode(value)
+	}
+	var command tea.Cmd
+	dashboard.input, command = dashboard.input.Update(value)
+	return dashboard, command
+}
+
+func (dashboard *Dashboard) launchOpenCode(project string) tea.Cmd {
 	if dashboard.actions.Launch == nil {
 		dashboard.activity = "OpenCode launch is unavailable"
 		return nil
 	}
-	command, err := dashboard.actions.Launch()
+	command, err := dashboard.actions.Launch(project)
 	if err != nil {
 		dashboard.activity = "OpenCode failed: " + err.Error()
 		return nil
 	}
+	dashboard.activeScreen = menuScreen
 	dashboard.activity = "Running OpenCode..."
 	return tea.ExecProcess(command, func(err error) tea.Msg { return launchFinishedMsg{err: err} })
+}
+
+func (dashboard *Dashboard) reset() tea.Cmd {
+	if dashboard.actions.Reset == nil {
+		return dashboard.operation("Configuration reset", nil)
+	}
+	return func() tea.Msg {
+		settings, err := dashboard.actions.Reset()
+		return operationMsg{name: "Configuration reset", err: err, settings: &settings}
+	}
 }
 
 func (dashboard *Dashboard) operation(name string, action func() error) tea.Cmd {
@@ -273,10 +350,18 @@ func (dashboard *Dashboard) readSnapshot() Snapshot {
 }
 
 func (dashboard *Dashboard) current() models.Entry {
-	if dashboard.modelSelected < 0 || dashboard.modelSelected >= len(dashboard.models) {
+	if dashboard.modelSelected < 0 || dashboard.modelSelected >= len(dashboard.choices) {
 		return models.Entry{}
 	}
-	return dashboard.models[dashboard.modelSelected]
+	return dashboard.choices[dashboard.modelSelected]
+}
+
+func (dashboard *Dashboard) installedModels() []models.Entry {
+	entries := make([]models.Entry, 0, len(dashboard.snapshot.Installed))
+	for name := range dashboard.snapshot.Installed {
+		entries = append(entries, models.Entry{Name: name, Size: "installed"})
+	}
+	return entries
 }
 
 func (dashboard *Dashboard) callDownload(model string) error {
@@ -320,6 +405,12 @@ func (dashboard *Dashboard) callSelect(model string) error {
 func (dashboard *Dashboard) View() tea.View {
 	width := dashboard.width
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Width(width).Align(lipgloss.Center).Render("LOCAL LLM")
+	if dashboard.activeScreen != menuScreen {
+		view := tea.NewView(strings.Join([]string{title, "", dashboard.actionScreen()}, "\n"))
+		view.AltScreen = true
+		view.WindowTitle = "Local LLM"
+		return view
+	}
 	hints := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(width).Align(lipgloss.Center).Render("↑/↓ Navigate  •  Enter select  •  Esc back  •  q quit")
 	overview, resources := dashboard.statusPanels(width)
 	actions, actionLine := dashboard.actionList()
@@ -329,6 +420,84 @@ func (dashboard *Dashboard) View() tea.View {
 	view.AltScreen = true
 	view.WindowTitle = "Local LLM"
 	return view
+}
+
+func (dashboard *Dashboard) actionScreen() string {
+	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(dashboard.screenTitle())
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	switch dashboard.activeScreen {
+	case confirmScreen:
+		return strings.Join([]string{heading, "", dashboard.confirmationDescription(), "", "[Enter] Confirm   [Esc] Cancel"}, "\n")
+	case pickerScreen:
+		lines := []string{heading, ""}
+		if len(dashboard.choices) == 0 {
+			lines = append(lines, "No installed models are available.")
+		} else {
+			for index, model := range dashboard.choices {
+				marker := " "
+				if index == dashboard.modelSelected {
+					marker = "›"
+				}
+				lines = append(lines, fmt.Sprintf("%s %s  •  %s", marker, model.Name, model.Size))
+			}
+		}
+		lines = append(lines, "", "[↑/↓] Navigate   [Enter] Continue   [Esc] Back")
+		return strings.Join(lines, "\n")
+	case storageScreen:
+		return strings.Join([]string{heading, "", "Where should new Ollama models be stored?", "", dashboard.input.View(), dim.Render("Required: an absolute writable directory."), "", "[Enter] Save location   [Esc] Cancel"}, "\n")
+	case projectScreen:
+		return strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n")
+	}
+	return ""
+}
+
+func (dashboard *Dashboard) screenTitle() string {
+	switch dashboard.activeScreen {
+	case pickerScreen:
+		if dashboard.pickerAction == downloadModelAction {
+			return "DOWNLOAD A MODEL"
+		}
+		if dashboard.pickerAction == selectModelAction {
+			return "CHOOSE DEFAULT MODEL"
+		}
+		return "DELETE A MODEL"
+	case storageScreen:
+		return "CONFIGURE MODEL STORAGE"
+	case projectScreen:
+		return "START OPENCODE SESSION"
+	case confirmScreen:
+		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
+	}
+	return "LOCAL LLM"
+}
+
+func (dashboard *Dashboard) confirmationDescription() string {
+	switch dashboard.pendingAction {
+	case setupAction:
+		return "Install and configure Ollama for this user. This may request system permission."
+	case startServerAction:
+		return "Start the Ollama server managed by this dashboard."
+	case stopServerAction:
+		return "Stop only the Ollama server started by this dashboard. Downloaded models are kept."
+	case resetConfigurationAction:
+		return "Clear saved local-LLM settings and stop the managed server. Ollama and downloaded models are kept."
+	case downloadModelAction:
+		return "Download " + dashboard.current().Name + " to " + dashboard.config.ModelDirectory + "."
+	case selectModelAction:
+		return "Use " + dashboard.current().Name + " as the default local model."
+	case deleteModelAction:
+		return "Delete " + dashboard.current().Name + " from Ollama."
+	}
+	return "Confirm this action."
+}
+
+func (dashboard *Dashboard) actionIndex(target action) int {
+	for index := range actionDefinitions {
+		if actionDefinitions[index].kind == target {
+			return index
+		}
+	}
+	return 0
 }
 
 func (dashboard *Dashboard) statusPanels(width int) (string, string) {
@@ -391,14 +560,6 @@ func (dashboard *Dashboard) actionList() (string, int) {
 		}
 		lines = append(lines, line)
 	}
-	if dashboard.pickerAction >= 0 {
-		picker, pickerLine := dashboard.modelPicker()
-		lines = append(lines, "")
-		if pickerLine >= 0 {
-			focusLine = len(lines) + pickerLine
-		}
-		lines = append(lines, picker)
-	}
 	lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(dashboard.activity))
 	return lipgloss.NewStyle().Width(dashboard.width).Padding(1, 2).Render(strings.Join(lines, "\n")), focusLine + 1
 }
@@ -406,29 +567,6 @@ func (dashboard *Dashboard) actionList() (string, int) {
 func (dashboard *Dashboard) sectionHeading(section string) string {
 	lineLength := max(1, dashboard.width-len(section)-6)
 	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(section + " " + strings.Repeat("─", lineLength))
-}
-
-func (dashboard *Dashboard) modelPicker() (string, int) {
-	purpose := map[action]string{
-		downloadModelAction: "Choose a model to download",
-		selectModelAction:   "Choose the default model",
-		deleteModelAction:   "Choose a model to delete",
-	}[dashboard.pickerAction]
-	lines := []string{purpose}
-	focusLine := -1
-	for index, model := range dashboard.models {
-		marker := " "
-		if index == dashboard.modelSelected {
-			marker = "›"
-			focusLine = len(lines)
-		}
-		installed := ""
-		if dashboard.snapshot.Installed[model.Name] {
-			installed = "  installed"
-		}
-		lines = append(lines, fmt.Sprintf("%s %s  •  %s%s", marker, model.Name, model.Size, installed))
-	}
-	return strings.Join(lines, "\n"), focusLine
 }
 
 func (dashboard *Dashboard) panel(title, body string, width int) string {

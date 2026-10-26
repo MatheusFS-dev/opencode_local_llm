@@ -14,11 +14,10 @@ type Config struct {
 	ContextLength  int    `json:"context_length"`
 }
 
-// Default returns the initial configuration for one XDG data directory.
-func Default(dataDirectory string) Config {
+// Default returns an initial configuration that requires a user-selected model directory.
+func Default(_ string) Config {
 	return Config{
-		ModelDirectory: filepath.Join(dataDirectory, "opencode-local-llm", "models"),
-		ContextLength:  16384,
+		ContextLength: 16384,
 	}
 }
 
@@ -78,7 +77,7 @@ func Save(path string, value Config) error {
 
 // Validate checks the settings that affect server ownership and storage.
 func (value Config) Validate() error {
-	if !filepath.IsAbs(value.ModelDirectory) {
+	if value.ModelDirectory != "" && !filepath.IsAbs(value.ModelDirectory) {
 		return fmt.Errorf("model directory must be an absolute path")
 	}
 	if value.ContextLength != 16384 && value.ContextLength != 32768 {

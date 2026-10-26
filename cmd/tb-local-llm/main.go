@@ -95,6 +95,9 @@ func run(arguments []string) error {
 		return path
 	}
 	ensure := func() error {
+		if saved.ModelDirectory == "" {
+			return fmt.Errorf("model storage is not configured; choose Configure model storage")
+		}
 		path := ollamaPath()
 		if path == "" {
 			return fmt.Errorf("Ollama is missing; choose Set up Ollama")
@@ -123,6 +126,23 @@ func run(arguments []string) error {
 			}
 			return saved, nil
 		},
+		SetStorage: func(directory string) (config.Config, error) {
+			if !filepath.IsAbs(directory) {
+				return config.Config{}, fmt.Errorf("model storage directory must be an absolute path")
+			}
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				return config.Config{}, fmt.Errorf("create model storage directory: %w", err)
+			}
+			info, err := os.Stat(directory)
+			if err != nil || !info.IsDir() {
+				return config.Config{}, fmt.Errorf("model storage path is not a directory: %s", directory)
+			}
+			saved.ModelDirectory = directory
+			if err := config.Save(settingsPath, saved); err != nil {
+				return config.Config{}, err
+			}
+			return saved, nil
+		},
 		Download: func(model string) error {
 			if err := ensure(); err != nil {
 				return err
@@ -146,9 +166,13 @@ func run(arguments []string) error {
 			saved.SelectedModel = model
 			return config.Save(settingsPath, saved)
 		},
-		Launch: func() (*exec.Cmd, error) {
+		Launch: func(project string) (*exec.Cmd, error) {
 			if saved.SelectedModel == "" {
 				return nil, fmt.Errorf("select an installed model first")
+			}
+			info, err := os.Stat(project)
+			if err != nil || !info.IsDir() {
+				return nil, fmt.Errorf("project folder is unavailable: %s", project)
 			}
 			if err := ensure(); err != nil {
 				return nil, err
@@ -157,7 +181,9 @@ func run(arguments []string) error {
 			if err != nil {
 				return nil, err
 			}
-			return exec.Command(path, "--model", "ollama/"+saved.SelectedModel), nil
+			command := exec.Command(path, "--model", "ollama/"+saved.SelectedModel)
+			command.Dir = project
+			return command, nil
 		},
 		Refresh: func() ui.Snapshot { return snapshot(client) },
 	}
