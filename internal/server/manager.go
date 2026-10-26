@@ -24,12 +24,20 @@ type Manager struct {
 	StatePath        string
 	ProcessArguments func(int) (string, error)
 	Terminate        func(int) error
+	Probe            func() bool
 }
 
 // Ensure starts a managed Ollama server when no server is listening locally.
 func (manager Manager) Ensure(ctx context.Context, binary string, settings config.Config) error {
-	if reachable() {
-		return nil
+	probe := manager.Probe
+	if probe == nil {
+		probe = reachable
+	}
+	if probe() {
+		if manager.ownsRecordedServer() {
+			return nil
+		}
+		return fmt.Errorf("Ollama is already listening on 127.0.0.1:11434 outside this application's managed server")
 	}
 	command := exec.Command(binary, "serve")
 	command.Env = append(os.Environ(), "OLLAMA_HOST=127.0.0.1:11434", "OLLAMA_NO_CLOUD=1", "OLLAMA_MODELS="+settings.ModelDirectory, fmt.Sprintf("OLLAMA_CONTEXT_LENGTH=%d", settings.ContextLength))
@@ -48,8 +56,9 @@ func (manager Manager) Ensure(ctx context.Context, binary string, settings confi
 		log.Close()
 		return err
 	}
+	log.Close()
 	for {
-		if reachable() {
+		if probe() {
 			return nil
 		}
 		select {
@@ -58,6 +67,23 @@ func (manager Manager) Ensure(ctx context.Context, binary string, settings confi
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+func (manager Manager) ownsRecordedServer() bool {
+	data, err := os.ReadFile(manager.StatePath)
+	if err != nil {
+		return false
+	}
+	var state State
+	if json.Unmarshal(data, &state) != nil || state.PID <= 0 {
+		return false
+	}
+	arguments := manager.ProcessArguments
+	if arguments == nil {
+		arguments = processArguments
+	}
+	command, err := arguments(state.PID)
+	return err == nil && strings.Contains(command, "ollama serve")
 }
 
 // SaveState atomically records a managed process identity.

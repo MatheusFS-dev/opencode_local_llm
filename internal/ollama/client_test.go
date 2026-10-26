@@ -2,6 +2,7 @@ package ollama
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -40,5 +41,41 @@ func TestClientDeletesByAPI(t *testing.T) {
 	defer server.Close()
 	if err := New(server.URL, server.Client()).Delete(context.Background(), "local:4b"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClientPullReportsStreamingProgress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/pull" {
+			t.Fatalf("request = %s %s", request.Method, request.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["model"] != "local:4b" || body["stream"] != true {
+			t.Fatalf("body = %#v", body)
+		}
+		_, _ = writer.Write([]byte("{\"status\":\"pulling\",\"completed\":4,\"total\":8}\n{\"status\":\"success\"}\n"))
+	}))
+	defer server.Close()
+	var progress []Progress
+	if err := New(server.URL, server.Client()).Pull(context.Background(), "local:4b", func(value Progress) {
+		progress = append(progress, value)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(progress) != 2 || progress[0].Completed != 4 || !progress[1].Complete {
+		t.Fatalf("progress = %#v", progress)
+	}
+}
+
+func TestClientPullRejectsStreamWithoutTerminalSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write([]byte("{\"status\":\"pulling\"}\n"))
+	}))
+	defer server.Close()
+	if err := New(server.URL, server.Client()).Pull(context.Background(), "local:4b", nil); err == nil {
+		t.Fatal("Pull succeeded without terminal success")
 	}
 }

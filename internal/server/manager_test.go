@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/MatheusFS-dev/opencode_local_llm/internal/config"
 )
 
 func TestStopRefusesUnknownOrStaleProcess(t *testing.T) {
@@ -40,5 +42,16 @@ func TestStopTerminatesVerifiedOllamaAndClearsState(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("state still exists: %v", err)
+	}
+}
+
+func TestEnsureRefusesExternalListener(t *testing.T) {
+	manager := Manager{
+		StatePath: filepath.Join(t.TempDir(), "server.json"),
+		Probe:     func() bool { return true },
+	}
+	err := manager.Ensure(t.Context(), "ollama", config.Config{ModelDirectory: "/models", ContextLength: 16384})
+	if err == nil || err.Error() != "Ollama is already listening on 127.0.0.1:11434 outside this application's managed server" {
+		t.Fatalf("Ensure() error = %v", err)
 	}
 }

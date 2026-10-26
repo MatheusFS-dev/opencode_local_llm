@@ -3,6 +3,7 @@ package application
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"testing"
@@ -42,6 +43,24 @@ func TestRunWorkerUsesPersistedSelectedModel(t *testing.T) {
 func TestRunWorkerRejectsMissingSelectedModel(t *testing.T) {
 	root := t.TempDir()
 	application := Application{ConfigPath: filepath.Join(root, "missing.json"), Defaults: config.Default(root)}
+	if err := application.RunWorker(context.Background(), []string{"--project", root, "--task", "Task", "--criteria", "Criteria"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("RunWorker succeeded")
+	}
+}
+
+func TestRunWorkerRejectsSelectedModelRemovedOutsideDashboard(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	if err := config.Save(configPath, config.Config{ModelDirectory: filepath.Join(root, "models"), SelectedModel: "removed:4b", ContextLength: 16384}); err != nil {
+		t.Fatal(err)
+	}
+	application := Application{
+		ConfigPath: configPath,
+		Defaults:   config.Default(root),
+		ValidateSelectedModel: func(context.Context, string) error {
+			return fmt.Errorf("not installed")
+		},
+	}
 	if err := application.RunWorker(context.Background(), []string{"--project", root, "--task", "Task", "--criteria", "Criteria"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
 		t.Fatal("RunWorker succeeded")
 	}

@@ -12,10 +12,11 @@ import (
 
 // Application provides the noninteractive local-LLM command interfaces.
 type Application struct {
-	ConfigPath    string
-	Defaults      config.Config
-	EnsureServer  func(config.Config) error
-	ExecuteWorker func(context.Context, worker.Request, io.Writer, io.Writer) error
+	ConfigPath            string
+	Defaults              config.Config
+	EnsureServer          func(config.Config) error
+	ValidateSelectedModel func(context.Context, string) error
+	ExecuteWorker         func(context.Context, worker.Request, io.Writer, io.Writer) error
 }
 
 // RunWorker validates worker flags, loads the selected model, and invokes OpenCode.
@@ -45,6 +46,11 @@ func (application Application) RunWorker(ctx context.Context, arguments []string
 	if application.EnsureServer != nil {
 		if err := application.EnsureServer(saved); err != nil {
 			return fmt.Errorf("ensure local Ollama server: %w", err)
+		}
+	}
+	if application.ValidateSelectedModel != nil {
+		if err := application.ValidateSelectedModel(ctx, saved.SelectedModel); err != nil {
+			return fmt.Errorf("selected local model is unavailable: %w", err)
 		}
 	}
 	if application.ExecuteWorker == nil {
