@@ -123,6 +123,7 @@ func New(saved config.Config, catalog []models.Entry, actions ...Actions) *Dashb
 func (dashboard *Dashboard) Resize(width, height int) {
 	dashboard.width = max(20, width)
 	dashboard.height = max(8, height)
+	dashboard.input.SetWidth(max(1, dashboard.width-4))
 }
 
 // Init begins periodic non-blocking status refreshes.
@@ -447,9 +448,9 @@ func (dashboard *Dashboard) actionScreen() string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	switch dashboard.activeScreen {
 	case resultScreen:
-		return strings.Join([]string{heading, "", dashboard.result, "", "[Enter] Back"}, "\n")
+		return dashboard.wrap(strings.Join([]string{heading, "", dashboard.result, "", "[Enter] Back"}, "\n"))
 	case confirmScreen:
-		return strings.Join([]string{heading, "", dashboard.confirmationDescription(), "", "[Enter] Confirm   [Esc] Cancel"}, "\n")
+		return dashboard.wrap(strings.Join([]string{heading, "", dashboard.confirmationDescription(), "", "[Enter] Confirm   [Esc] Cancel"}, "\n"))
 	case pickerScreen:
 		lines := []string{heading, ""}
 		if len(dashboard.choices) == 0 {
@@ -464,11 +465,11 @@ func (dashboard *Dashboard) actionScreen() string {
 			}
 		}
 		lines = append(lines, "", "[↑/↓] Navigate   [Enter] Continue   [Esc] Back")
-		return strings.Join(lines, "\n")
+		return dashboard.wrap(strings.Join(lines, "\n"))
 	case storageScreen:
-		return strings.Join([]string{heading, "", "Where should new Ollama models be stored?", "", dashboard.input.View(), dim.Render("Required: an absolute writable directory."), "", "[Enter] Save location   [Esc] Cancel"}, "\n")
+		return dashboard.wrap(strings.Join([]string{heading, "", "Where should new Ollama models be stored?", "", dashboard.input.View(), dim.Render("Required: an absolute writable directory."), "", "[Enter] Save location   [Esc] Cancel"}, "\n"))
 	case projectScreen:
-		return strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n")
+		return dashboard.wrap(strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n"))
 	}
 	return ""
 }
@@ -540,14 +541,9 @@ func (dashboard *Dashboard) statusPanels(width int) (string, string) {
 
 func (dashboard *Dashboard) statusLine(title, value string) string {
 	firstLine := strings.Split(value, "\n")[0]
-	maximum := max(8, dashboard.width-len(title)-4)
-	runes := []rune(firstLine)
-	if len(runes) > maximum {
-		firstLine = string(runes[:maximum-1]) + "…"
-	}
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(title)
 	detail := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  " + firstLine)
-	return heading + detail
+	return dashboard.wrap(heading + detail)
 }
 
 func (dashboard *Dashboard) actionViewport(content string, focusLine, height int) (string, string, string) {
@@ -600,7 +596,11 @@ func (dashboard *Dashboard) sectionHeading(section string) string {
 
 func (dashboard *Dashboard) panel(title, body string, width int) string {
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(title)
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1).Width(width).Render(heading + "\n" + body)
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1).Width(width).Render(heading + "\n" + lipgloss.Wrap(body, max(1, width-4), ""))
+}
+
+func (dashboard *Dashboard) wrap(text string) string {
+	return lipgloss.Wrap(text, dashboard.width, "")
 }
 
 func empty(value string) string {

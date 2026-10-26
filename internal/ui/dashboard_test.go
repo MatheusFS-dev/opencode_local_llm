@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/config"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/models"
 )
@@ -180,4 +181,31 @@ func TestDashboardPlacesStatusPanelsSideBySideInWideTerminal(t *testing.T) {
 		}
 	}
 	t.Fatalf("wide view must place overview and resources side by side:\n%s", view)
+}
+
+func TestDashboardWrapsFocusedScreenTextToTerminalWidth(t *testing.T) {
+	dashboard := New(config.Config{ContextLength: 16384}, nil)
+	dashboard.Resize(30, 24)
+	dashboard.activeScreen = confirmScreen
+	dashboard.pendingAction = resetConfigurationAction
+	for _, line := range strings.Split(dashboard.View().Content, "\n") {
+		if width := lipgloss.Width(line); width > 30 {
+			t.Fatalf("line width = %d, want at most 30: %q", width, line)
+		}
+	}
+}
+
+func TestDashboardWrapsMainScreenTextToTerminalWidth(t *testing.T) {
+	dashboard := New(config.Config{
+		ModelDirectory: "/media/matheus.f@local.inatel.br/ssd01/models/very-long-model-storage-directory",
+		SelectedModel:  "ollama/huihui_ai/qwen3.5-abliterated:4B",
+		ContextLength:  16384,
+	}, nil)
+	dashboard.snapshot = Snapshot{GPU: "NVIDIA GeForce RTX 4070 with a long driver status description"}
+	dashboard.Resize(30, 40)
+	for _, line := range strings.Split(dashboard.View().Content, "\n") {
+		if width := lipgloss.Width(line); width > 30 {
+			t.Fatalf("line width = %d, want at most 30: %q", width, line)
+		}
+	}
 }
