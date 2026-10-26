@@ -157,8 +157,19 @@ func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return dashboard, dashboard.refresh()
 	case tea.KeyPressMsg:
 		return dashboard.key(value)
+	case tea.PasteMsg:
+		return dashboard.paste(value)
 	}
 	return dashboard, nil
+}
+
+func (dashboard *Dashboard) paste(value tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if dashboard.activeScreen != storageScreen && dashboard.activeScreen != projectScreen {
+		return dashboard, nil
+	}
+	var command tea.Cmd
+	dashboard.input, command = dashboard.input.Update(value)
+	return dashboard, command
 }
 
 func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {

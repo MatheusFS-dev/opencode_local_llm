@@ -77,6 +77,15 @@ func TestDashboardRequiresStorageConfigurationBeforeDownload(t *testing.T) {
 	}
 }
 
+func TestDashboardAcceptsPastedStoragePath(t *testing.T) {
+	dashboard := New(config.Config{ContextLength: 16384}, nil)
+	dashboard.openStorage()
+	dashboard.Update(tea.PasteMsg{Content: "/media/models"})
+	if got := dashboard.input.Value(); got != "/media/models" {
+		t.Fatalf("pasted storage path = %q, want %q", got, "/media/models")
+	}
+}
+
 func TestDashboardShowsOnlyInstalledModelsForDefaultSelection(t *testing.T) {
 	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, []models.Entry{{Name: "catalog-only:4b", Size: "4 GB"}})
 	dashboard.snapshot.Installed = map[string]bool{"installed:4b": true}
