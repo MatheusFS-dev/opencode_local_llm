@@ -97,6 +97,25 @@ func TestDashboardShowsLabeledModelRequirements(t *testing.T) {
 	}
 }
 
+func TestDashboardStylesModelPickerCardsBySelection(t *testing.T) {
+	catalog := []models.Entry{
+		{Name: "selected:4b", Size: "4 GB", VRAM: "8 GB"},
+		{Name: "available:9b", Size: "8 GB", VRAM: "12 GB"},
+	}
+	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, catalog)
+	dashboard.openPicker(downloadModelAction, catalog)
+	view := dashboard.View().Content
+
+	greenName := lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render("selected:4b")
+	whiteName := lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render("available:9b")
+	grayDescription := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Estimated download: 4 GB")
+	for _, expected := range []string{greenName, whiteName, grayDescription} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("model picker missing styled content %q:\n%s", expected, view)
+		}
+	}
+}
+
 func TestDashboardAcceptsPastedStoragePath(t *testing.T) {
 	dashboard := New(config.Config{ContextLength: 16384}, nil)
 	dashboard.openStorage()

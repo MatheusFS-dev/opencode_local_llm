@@ -475,15 +475,20 @@ func (dashboard *Dashboard) modelCard(index int, model models.Entry) []string {
 	if index == dashboard.modelSelected {
 		marker = "›"
 	}
-	lines := dashboard.wrapIndented(marker+" ", model.Name)
+	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+	if index == dashboard.modelSelected {
+		nameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	}
+	descriptionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	lines := dashboard.wrapIndented(marker+" ", nameStyle.Render(model.Name))
 	if model.Size == "installed" {
-		return append(lines, "  Installed on this machine")
+		return append(lines, dashboard.wrapIndented("  ", descriptionStyle.Render("Installed on this machine"))...)
 	}
 	if model.Size != "" {
-		lines = append(lines, dashboard.wrapIndented("  Estimated download: ", model.Size)...)
+		lines = append(lines, dashboard.wrapIndented("  ", descriptionStyle.Render("Estimated download: "+model.Size))...)
 	}
 	if model.VRAM != "" {
-		lines = append(lines, dashboard.wrapIndented("  VRAM required: ", model.VRAM)...)
+		lines = append(lines, dashboard.wrapIndented("  ", descriptionStyle.Render("VRAM required: "+model.VRAM))...)
 	}
 	return lines
 }
