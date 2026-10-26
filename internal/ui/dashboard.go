@@ -76,6 +76,7 @@ const (
 	pickerScreen
 	storageScreen
 	projectScreen
+	resultScreen
 )
 
 type operationMsg struct {
@@ -101,6 +102,7 @@ type Dashboard struct {
 	activeScreen   screen
 	pendingAction  action
 	input          textinput.Model
+	result         string
 	scrollOffset   int
 	width          int
 	height         int
@@ -139,17 +141,19 @@ func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			dashboard.config = *value.settings
 		}
 		if value.err != nil {
-			dashboard.activity = fmt.Sprintf("%s failed: %v", value.name, value.err)
+			dashboard.result = fmt.Sprintf("%s failed: %v", value.name, value.err)
 		} else {
-			dashboard.activity = value.name + " completed"
+			dashboard.result = value.name + " completed"
 		}
+		dashboard.activeScreen = resultScreen
 		return dashboard, dashboard.refresh()
 	case launchFinishedMsg:
 		if value.err != nil {
-			dashboard.activity = "OpenCode failed: " + value.err.Error()
+			dashboard.result = "OpenCode failed: " + value.err.Error()
 		} else {
-			dashboard.activity = "OpenCode session completed"
+			dashboard.result = "OpenCode session completed"
 		}
+		dashboard.activeScreen = resultScreen
 		return dashboard, dashboard.refresh()
 	case tea.KeyPressMsg:
 		return dashboard.key(value)
@@ -159,6 +163,11 @@ func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch dashboard.activeScreen {
+	case resultScreen:
+		if value.Code == tea.KeyEnter || value.Code == tea.KeyEscape {
+			dashboard.activeScreen = menuScreen
+		}
+		return dashboard, nil
 	case confirmScreen:
 		return dashboard.confirm(value)
 	case pickerScreen:
@@ -190,7 +199,7 @@ func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (dashboard *Dashboard) selectAction() tea.Cmd {
 	switch actionDefinitions[dashboard.actionSelected].kind {
 	case setupAction, startServerAction, stopServerAction, resetConfigurationAction:
-		dashboard.pendingAction = action(dashboard.actionSelected)
+		dashboard.pendingAction = actionDefinitions[dashboard.actionSelected].kind
 		dashboard.activeScreen = confirmScreen
 	case configureStorageAction:
 		dashboard.openStorage()
@@ -222,6 +231,7 @@ func (dashboard *Dashboard) openStorage() {
 }
 
 func (dashboard *Dashboard) openProject() {
+	dashboard.pendingAction = launchOpenCodeAction
 	dashboard.activeScreen = projectScreen
 	dashboard.input.SetValue("")
 	dashboard.input.Focus()
@@ -256,7 +266,6 @@ func (dashboard *Dashboard) confirm(value tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	if value.Code != tea.KeyEnter {
 		return dashboard, nil
 	}
-	dashboard.activeScreen = menuScreen
 	model := dashboard.current().Name
 	switch dashboard.pendingAction {
 	case setupAction:
@@ -293,7 +302,6 @@ func (dashboard *Dashboard) textEntry(value tea.KeyPressMsg) (tea.Model, tea.Cmd
 				dashboard.activity = "Storage configuration is unavailable"
 				return dashboard, nil
 			}
-			dashboard.activeScreen = menuScreen
 			return dashboard, func() tea.Msg {
 				settings, err := dashboard.actions.SetStorage(value)
 				return operationMsg{name: "Model storage configured", err: err, settings: &settings}
@@ -426,6 +434,8 @@ func (dashboard *Dashboard) actionScreen() string {
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(dashboard.screenTitle())
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	switch dashboard.activeScreen {
+	case resultScreen:
+		return strings.Join([]string{heading, "", dashboard.result, "", "[Enter] Back"}, "\n")
 	case confirmScreen:
 		return strings.Join([]string{heading, "", dashboard.confirmationDescription(), "", "[Enter] Confirm   [Esc] Cancel"}, "\n")
 	case pickerScreen:
@@ -466,6 +476,8 @@ func (dashboard *Dashboard) screenTitle() string {
 	case projectScreen:
 		return "START OPENCODE SESSION"
 	case confirmScreen:
+		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
+	case resultScreen:
 		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
 	}
 	return "LOCAL LLM"

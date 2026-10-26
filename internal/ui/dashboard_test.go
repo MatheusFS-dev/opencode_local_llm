@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -40,6 +41,25 @@ func TestDashboardShowsStatusPanelsAndActionList(t *testing.T) {
 		if strings.Contains(view, removed) {
 			t.Fatalf("view unexpectedly contains %q:\n%s", removed, view)
 		}
+	}
+}
+
+func TestDashboardKeepsOperationFailureOnFocusedResultScreen(t *testing.T) {
+	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, nil, Actions{Setup: func() error {
+		return errors.New("Ollama is already installed at /usr/local/bin/ollama")
+	}})
+	_, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, command := dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, _ = dashboard.Update(command())
+	view := dashboard.View().Content
+	for _, expected := range []string{"SET UP OLLAMA", "Ollama setup failed: Ollama is already installed at /usr/local/bin/ollama", "[Enter] Back"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("result screen missing %q:\n%s", expected, view)
+		}
+	}
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if view := dashboard.View().Content; !strings.Contains(view, "SETUP") {
+		t.Fatalf("Enter must return to the main screen:\n%s", view)
 	}
 }
 
