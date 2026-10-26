@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,6 +113,16 @@ func run(arguments []string) error {
 		},
 		Start: ensure,
 		Stop:  manager.Stop,
+		Reset: func() (config.Config, error) {
+			if err := manager.Stop(); err != nil && !strings.Contains(err.Error(), "no managed Ollama server is running") {
+				return config.Config{}, err
+			}
+			saved = defaults
+			if err := config.Save(settingsPath, saved); err != nil {
+				return config.Config{}, err
+			}
+			return saved, nil
+		},
 		Download: func(model string) error {
 			if err := ensure(); err != nil {
 				return err
@@ -186,7 +197,47 @@ func gpuStatus() string {
 	if err != nil || strings.TrimSpace(string(output)) == "" {
 		return "Unavailable"
 	}
-	return strings.TrimSpace(string(output))
+	return formatGPUStatus(string(output))
+}
+
+func formatGPUStatus(output string) string {
+	entries := make([]string, 0)
+	for _, row := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Split(row, ",")
+		if len(fields) != 4 {
+			return "Unavailable"
+		}
+		name := strings.TrimSpace(fields[0])
+		utilization, err := strconv.Atoi(strings.TrimSpace(fields[1]))
+		if err != nil || name == "" {
+			return "Unavailable"
+		}
+		used, err := formatMiB(strings.TrimSpace(fields[2]))
+		if err != nil {
+			return "Unavailable"
+		}
+		total, err := formatMiB(strings.TrimSpace(fields[3]))
+		if err != nil {
+			return "Unavailable"
+		}
+		entries = append(entries, fmt.Sprintf("GPU: %s\n%d%% utilization, %s MiB / %s MiB VRAM used", name, utilization, used, total))
+	}
+	if len(entries) == 0 {
+		return "Unavailable"
+	}
+	return strings.Join(entries, "\n\n")
+}
+
+func formatMiB(value string) (string, error) {
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number < 0 {
+		return "", fmt.Errorf("invalid MiB value %q", value)
+	}
+	formatted := strconv.FormatInt(number, 10)
+	for index := len(formatted) - 3; index > 0; index -= 3 {
+		formatted = formatted[:index] + "," + formatted[index:]
+	}
+	return formatted, nil
 }
 
 func bytes(value int64) string {
