@@ -18,6 +18,27 @@ type modelEntry struct {
 	Name string `json:"name"`
 	Size string `json:"size"`
 }
+
+type vramRequirement struct {
+	VRAM    string
+	Context string
+}
+
+var guideVRAMRequirements = map[string][]vramRequirement{
+	"huihui_ai/gemma-4-abliterated:12b": {{VRAM: "12 GB", Context: "16–32K"}},
+	"gemma4:12b":                        {{VRAM: "12 GB", Context: "16–32K"}},
+	"huihui_ai/qwen3.5-abliterated:9b": {
+		{VRAM: "12 GB", Context: "16–32K"},
+		{VRAM: "8 GB", Context: "4–8K tight fit"},
+	},
+	"qwen3.5:9b": {
+		{VRAM: "12 GB", Context: "16–32K"},
+		{VRAM: "8 GB", Context: "4–8K tight fit"},
+	},
+	"huihui_ai/qwen3.5-abliterated:4B": {{VRAM: "8 GB", Context: "16–32K"}},
+	"qwen3.5:4b":                       {{VRAM: "8 GB", Context: "16–32K"}},
+}
+
 type progress struct {
 	Status    string `json:"status"`
 	Digest    string `json:"digest"`
@@ -210,7 +231,14 @@ func (a app) View() string {
 		}
 		left = append(left, marker+model.Name+" ("+model.Size+")")
 	}
-	right := []string{"Status", "", "Model: " + a.models[a.selected].Name, "Status: " + a.status.Status, "Storage: " + strings.TrimRight(a.baseDir, "/") + "/" + strings.ReplaceAll(a.models[a.selected].Name, ":", "-")}
+	selectedModel := a.models[a.selected]
+	right := []string{"Status", "", "Model: " + selectedModel.Name, "Status: " + a.status.Status, "Storage: " + strings.TrimRight(a.baseDir, "/") + "/" + strings.ReplaceAll(selectedModel.Name, ":", "-")}
+	if requirements := guideVRAMRequirements[selectedModel.Name]; len(requirements) > 0 {
+		right = append(right, "", "VRAM guidance")
+		for _, requirement := range requirements {
+			right = append(right, fmt.Sprintf("VRAM: %s, %s", requirement.VRAM, requirement.Context))
+		}
+	}
 	if a.status.Total > 0 {
 		right = append(right, fmt.Sprintf("Progress: %.1f%% (%d / %d bytes)", 100*float64(a.status.Completed)/float64(a.status.Total), a.status.Completed, a.status.Total))
 	}

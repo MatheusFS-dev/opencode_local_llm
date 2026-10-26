@@ -12,10 +12,9 @@ From the repository root:
 
 ```bash
 ./src/setup.sh
-./src/service.sh ondemand
 ```
 
-`setup.sh` installs or updates Ollama and OpenCode V2. It stops on installation errors and reports the failing command. After downloading a model with `./src/download.sh`, you can use the systemd service instead:
+`setup.sh` installs or updates the Go toolchain, Ollama, and OpenCode V2. It stops on installation errors and reports the failing command. Go and `gofmt` are linked in `/usr/local/bin`, so the development checks work from later shells too. Setup also stops and disables Ollama's installer-created system service, leaving the project in on-demand mode for `run.sh` and `download.sh`. After downloading a model with `./src/download.sh`, you can use the systemd service instead:
 
 ```bash
 ./src/service.sh persistent
@@ -28,7 +27,12 @@ Switch back with `./src/service.sh ondemand`. Check the selected mode and port w
 systemd=true
 ```
 
-No model directory is built into the scripts. Both modes bind to `127.0.0.1:11434`, set a 16,384 token starting context, and disable Ollama cloud features. The downloader saves the selected base directory and the active model's storage directory. Persistent mode writes `/etc/systemd/system/ollama.service.d/local-models.conf` and restarts Ollama when the selected model changes.
+| Mode | What happens | Use it when |
+| --- | --- | --- |
+| On-demand | `run.sh` starts a private Ollama server immediately before OpenCode and stops it when OpenCode exits. The system Ollama service remains disabled. | You normally use the interactive `./src/run.sh` workflow, or WSL does not have systemd enabled. |
+| Persistent | systemd keeps the Ollama server available at `127.0.0.1:11434` between OpenCode sessions. | You want to run `opencode` or `opencode run` directly, including a Codex or Claude-controlled local worker. Requires systemd. |
+
+On-demand mode is the default after setup. In either mode, Ollama can unload an idle model, so persistent mode does not guarantee that model weights always occupy VRAM. No model directory is built into the scripts. Both modes bind to `127.0.0.1:11434`, use the saved 16K or 32K context selection, and disable Ollama cloud features. The downloader saves the selected base directory and the active model's storage directory. Persistent mode writes `/etc/systemd/system/ollama.service.d/local-models.conf` and restarts Ollama when the selected model changes.
 
 ## Download a model
 
@@ -38,7 +42,30 @@ No model directory is built into the scripts. Both modes bind to `127.0.0.1:1143
 
 The script first asks for an absolute **base directory**. On later runs, press Enter to keep the saved base. Each selected model gets its own Ollama storage root at `<base directory>/<model name>`. A colon in the model tag becomes `-` in the folder name. For example, choosing `/data/models` and `huihui_ai/qwen3.5-abliterated:4B` uses `/data/models/huihui_ai/qwen3.5-abliterated-4B`. Ollama stores its blobs and manifests inside that directory. Switching models changes the active storage root, so `run.sh` uses the last selected model.
 
-The script installs the latest stable Go release from official metadata when needed, verifies its SHA-256 checksum, and builds the downloader. Select a model with arrow keys and press Enter. The left pane shows `src/models.json` entries. The right pane updates the current pull status and byte progress. Press `q` to exit or cancel a pull. An API error exits the interface and prints the full request and error in the terminal. Only one pull runs at a time. The catalog currently offers `huihui_ai/qwen3.5-abliterated:4B`, listed at about 3.3 GB.
+The script installs the latest stable Go release from official metadata when needed, verifies its SHA-256 checksum, and builds the downloader. Select a model with arrow keys and press Enter. The left pane shows `src/models.json` entries. The right pane shows the selected model's guide-derived VRAM guidance and starting context, then updates the current pull status and byte progress. Press `q` to exit or cancel a pull. An API error exits the interface and prints the full request and error in the terminal. Only one pull runs at a time. The catalog offers:
+
+| Model | Download size |
+| --- | --- |
+| `huihui_ai/qwen3.5-abliterated:4B` | about 3.3 GB |
+| `qwen3.5:4b` | 3.3–4.0 GB |
+| `huihui_ai/gemma-4-abliterated:12b` | 7.6 GB |
+| `gemma4:12b` | 7.7–8.0 GB |
+| `huihui_ai/qwen3.5-abliterated:9b` | 6.6 GB |
+| `qwen3.5:9b` | 6.6–7.6 GB |
+
+## GPU and context window
+
+Ollama automatically selects a compatible GPU. While a model is generating a response, use these commands in another terminal to confirm the actual device and VRAM use:
+
+```bash
+nvidia-smi -L
+ollama ps
+nvidia-smi
+```
+
+`ollama ps` reports whether the model is fully on the GPU, such as `100% GPU`, or partly offloaded to CPU. `nvidia-smi` identifies the GPU index and the `ollama` process using it.
+
+Setup asks you to choose a 16K or 32K context window and saves the selection for both on-demand and persistent mode. Run `./src/setup.sh` again to choose a different value. Larger context windows require more VRAM, so increase the setting gradually and verify the result with `ollama ps`.
 
 ## Run OpenCode
 
@@ -46,7 +73,7 @@ The script installs the latest stable Go release from official metadata when nee
 ./src/run.sh /path/to/project
 ```
 
-Omit the path to use the current directory. On-demand mode starts Ollama for the command and stops it when OpenCode exits. Persistent mode uses the configured service. Inside OpenCode, use `/models` and select `ollama/huihui_ai/qwen3.5-abliterated:4B`.
+Omit the path to use the current directory. On-demand mode starts Ollama for the command and stops it when OpenCode exits. Persistent mode uses the configured service. If another local process occupies OpenCode's managed-service port, `run.sh` selects the next available loopback port through OpenCode's service configuration. This works on both Ubuntu and WSL. Inside OpenCode, use `/models` and select `ollama/huihui_ai/qwen3.5-abliterated:4B`.
 
 > [!IMPORTANT]
 > In on-demand mode, always start OpenCode with `./src/run.sh`. Running `opencode` directly does not start Ollama. If OpenCode retries with `ECONNREFUSED: Unable to connect`, no Ollama server is listening on `127.0.0.1:11434`; exit OpenCode and start it through `./src/run.sh`.

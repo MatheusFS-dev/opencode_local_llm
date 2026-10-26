@@ -20,7 +20,7 @@ case ${1:-} in
   unit_models_dir=${MODELS_DIR//\\/\\\\}
   unit_models_dir=${unit_models_dir//\"/\\\"}
   unit_models_dir=${unit_models_dir//%/%%}
-  printf '[Service]\nEnvironment="OLLAMA_MODELS=%s"\nEnvironment="OLLAMA_CONTEXT_LENGTH=16384"\nEnvironment="OLLAMA_HOST=127.0.0.1:11434"\nEnvironment="OLLAMA_NO_CLOUD=1"\n' "$unit_models_dir" | sudo tee "$DROPIN" >/dev/null
+  printf '[Service]\nEnvironment="OLLAMA_MODELS=%s"\nEnvironment="OLLAMA_CONTEXT_LENGTH=%s"\nEnvironment="OLLAMA_HOST=127.0.0.1:11434"\nEnvironment="OLLAMA_NO_CLOUD=1"\n' "$unit_models_dir" "$OLLAMA_CONTEXT_LENGTH" | sudo tee "$DROPIN" >/dev/null
   sudo chown ollama:"$(id -gn)" "$MODELS_DIR"
   sudo chmod 2775 "$MODELS_DIR"
   sudo systemctl daemon-reload

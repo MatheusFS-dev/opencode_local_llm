@@ -78,6 +78,28 @@ func TestStatusShowsEncodedModelDirectory(t *testing.T) {
 	}
 }
 
+func TestViewShowsGuideVRAMRequirementsForSelectedModel(t *testing.T) {
+	tests := map[string][]string{
+		"huihui_ai/gemma-4-abliterated:12b": {"VRAM: 12 GB, 16–32K"},
+		"gemma4:12b":                        {"VRAM: 12 GB, 16–32K"},
+		"huihui_ai/qwen3.5-abliterated:9b":  {"VRAM: 12 GB, 16–32K", "VRAM: 8 GB, 4–8K tight fit"},
+		"qwen3.5:9b":                        {"VRAM: 12 GB, 16–32K", "VRAM: 8 GB, 4–8K tight fit"},
+		"huihui_ai/qwen3.5-abliterated:4B":  {"VRAM: 8 GB, 16–32K"},
+		"qwen3.5:4b":                        {"VRAM: 8 GB, 16–32K"},
+	}
+	for model, recommendations := range tests {
+		t.Run(model, func(t *testing.T) {
+			a := app{models: []modelEntry{{Name: model}}, width: 160, baseDir: "/data/models"}
+			view := a.View()
+			for _, recommendation := range recommendations {
+				if !strings.Contains(view, recommendation) {
+					t.Errorf("view missing recommendation %q:\n%s", recommendation, view)
+				}
+			}
+		})
+	}
+}
+
 func TestCatalog(t *testing.T) {
 	for _, content := range []string{`[{"name":"one"}]`, `[{"name":"one"},{"name":"two"}]`} {
 		path := filepath.Join(t.TempDir(), "models.json")
@@ -90,6 +112,30 @@ func TestCatalog(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultCatalogIncludesRecommendedModels(t *testing.T) {
+	models, err := loadModels("../models.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"huihui_ai/gemma-4-abliterated:12b": "7.6 GB",
+		"gemma4:12b":                        "7.7–8.0 GB",
+		"huihui_ai/qwen3.5-abliterated:9b":  "6.6 GB",
+		"qwen3.5:9b":                        "6.6–7.6 GB",
+		"qwen3.5:4b":                        "3.3–4.0 GB",
+	}
+	got := make(map[string]string, len(models))
+	for _, model := range models {
+		got[model.Name] = model.Size
+	}
+	for name, size := range want {
+		if got[name] != size {
+			t.Errorf("catalog entry %q = %q, want %q", name, got[name], size)
+		}
+	}
+}
+
 func TestPullStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/pull" {

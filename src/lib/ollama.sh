@@ -2,10 +2,13 @@
 MODE_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/opencode-local-llm/mode
 MODELS_DIR_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/opencode-local-llm/models-dir
 BASE_MODELS_DIR_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/opencode-local-llm/models-base
+CONTEXT_LENGTH_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/opencode-local-llm/context-length
 BASE_MODELS_DIR=${OLLAMA_MODELS_BASE:-$(cat "$BASE_MODELS_DIR_FILE" 2>/dev/null || cat "$MODELS_DIR_FILE" 2>/dev/null || true)}
 MODELS_DIR=${OLLAMA_MODELS_DIR:-$(cat "$MODELS_DIR_FILE" 2>/dev/null || true)}
+saved_context_length=$(cat "$CONTEXT_LENGTH_FILE" 2>/dev/null || true)
+case $saved_context_length in 16384|32768) ;; *) saved_context_length=16384 ;; esac
 export DROPIN=/etc/systemd/system/ollama.service.d/local-models.conf
-export OLLAMA_CONTEXT_LENGTH=16384 OLLAMA_HOST=127.0.0.1:11434 OLLAMA_NO_CLOUD=1
+export OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-$saved_context_length} OLLAMA_HOST=127.0.0.1:11434 OLLAMA_NO_CLOUD=1
 if [[ -n $MODELS_DIR ]]; then export OLLAMA_MODELS="$MODELS_DIR"; fi
 fail() { echo "$*" >&2; return 1; }
 require_models_dir() { [[ $MODELS_DIR == /* ]] || fail 'Choose an absolute model directory with src/download.sh or set OLLAMA_MODELS_DIR.'; }
@@ -19,6 +22,19 @@ mode() { cat "$MODE_FILE" 2>/dev/null || echo ondemand; }
 write_mode() { mkdir -p "$(dirname "$MODE_FILE")"; printf '%s\n' "$1" > "$MODE_FILE"; }
 write_models_dir() { require_models_dir || return; mkdir -p "$(dirname "$MODELS_DIR_FILE")"; printf '%s\n' "$MODELS_DIR" > "$MODELS_DIR_FILE"; }
 write_base_dir() { [[ $BASE_MODELS_DIR == /* ]] || { fail 'Model base directory must be absolute.'; return 1; }; mkdir -p "$(dirname "$BASE_MODELS_DIR_FILE")"; printf '%s\n' "$BASE_MODELS_DIR" > "$BASE_MODELS_DIR_FILE"; }
+write_context_length() { mkdir -p "$(dirname "$CONTEXT_LENGTH_FILE")"; printf '%s\n' "$OLLAMA_CONTEXT_LENGTH" > "$CONTEXT_LENGTH_FILE"; }
+prompt_context_length() {
+ local choice
+ printf 'Context window:\n1) 16K tokens\n2) 32K tokens\nChoice [1]: ' >&2
+ if ! IFS= read -r choice; then choice=1; fi
+ case ${choice:-1} in
+  1|16|16k|16K) OLLAMA_CONTEXT_LENGTH=16384 ;;
+  2|32|32k|32K) OLLAMA_CONTEXT_LENGTH=32768 ;;
+  *) fail 'Choose 1 for 16K or 2 for 32K.'; return 1 ;;
+ esac
+ export OLLAMA_CONTEXT_LENGTH
+ write_context_length
+}
 model_store_dir() {
  local base=$1 model=$2 folder
  [[ $base == /* ]] || { fail 'Model base directory must be absolute.'; return 1; }
