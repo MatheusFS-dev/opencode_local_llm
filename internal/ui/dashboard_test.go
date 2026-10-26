@@ -18,6 +18,10 @@ func TestDashboardShowsStatusPanelsAndActionList(t *testing.T) {
 		"↑/↓ Navigate",
 		"OVERVIEW",
 		"RESOURCES",
+		"SETUP",
+		"MODELS",
+		"WORK",
+		"MAINTENANCE",
 		"Set up Ollama",
 		"Start OpenCode session",
 		"Stop managed Ollama server",
@@ -30,9 +34,23 @@ func TestDashboardShowsStatusPanelsAndActionList(t *testing.T) {
 			t.Fatalf("view missing %q:\n%s", expected, view)
 		}
 	}
-	for _, removed := range []string{"MODELS", "ACTIONS"} {
+	for _, removed := range []string{"ACTIONS"} {
 		if strings.Contains(view, removed) {
 			t.Fatalf("view unexpectedly contains %q:\n%s", removed, view)
+		}
+	}
+}
+
+func TestDashboardScrollsToKeepTheSelectedActionVisible(t *testing.T) {
+	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, nil)
+	dashboard.Resize(60, 12)
+	for range len(actionDefinitions) - 1 {
+		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	view := dashboard.View().Content
+	for _, expected := range []string{"Reset local configuration", "↑ more"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("short view missing %q after selecting the final action:\n%s", expected, view)
 		}
 	}
 }

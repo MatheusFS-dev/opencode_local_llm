@@ -3,6 +3,7 @@ module github.com/MatheusFS-dev/opencode_local_llm
 go 1.25.8
 
 require (
+	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/lipgloss/v2 v2.0.4
 )

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/config"
@@ -46,15 +47,20 @@ const (
 	resetConfigurationAction
 )
 
-var actionLabels = []string{
-	"Set up Ollama",
-	"Start managed Ollama server",
-	"Download a model",
-	"Choose default model",
-	"Start OpenCode session",
-	"Stop managed Ollama server",
-	"Delete a model",
-	"Reset local configuration",
+type actionDefinition struct {
+	label   string
+	section string
+}
+
+var actionDefinitions = []actionDefinition{
+	{label: "Set up Ollama", section: "SETUP"},
+	{label: "Start managed Ollama server", section: "SETUP"},
+	{label: "Download a model", section: "MODELS"},
+	{label: "Choose default model", section: "MODELS"},
+	{label: "Start OpenCode session", section: "WORK"},
+	{label: "Stop managed Ollama server", section: "MAINTENANCE"},
+	{label: "Delete a model", section: "MAINTENANCE"},
+	{label: "Reset local configuration", section: "MAINTENANCE"},
 }
 
 type operationMsg struct {
@@ -77,6 +83,7 @@ type Dashboard struct {
 	pickerAction   action
 	confirmDelete  bool
 	confirmReset   bool
+	scrollOffset   int
 	width          int
 	height         int
 }
@@ -169,7 +176,7 @@ func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			dashboard.actionSelected--
 		}
 	case tea.KeyDown:
-		if dashboard.actionSelected+1 < len(actionLabels) {
+		if dashboard.actionSelected+1 < len(actionDefinitions) {
 			dashboard.actionSelected++
 		}
 	case tea.KeyEnter:
@@ -316,40 +323,85 @@ func (dashboard *Dashboard) View() tea.View {
 	hints := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(width).Align(lipgloss.Center).Render("↑/↓ Navigate  •  Enter select  •  Esc back  •  q quit")
 	overview := dashboard.panel("OVERVIEW", fmt.Sprintf("Server: %s\nSelected: %s\nContext: %d tokens\nStorage: %s", empty(dashboard.snapshot.Server), empty(dashboard.config.SelectedModel), dashboard.config.ContextLength, dashboard.config.ModelDirectory), width)
 	resources := dashboard.panel("RESOURCES", fmt.Sprintf("%s\nLoaded model VRAM: %s", empty(dashboard.snapshot.GPU), empty(dashboard.snapshot.LoadedVRAM)), width)
-	body := lipgloss.JoinVertical(lipgloss.Left, overview, resources, dashboard.actionList())
-	view := tea.NewView(strings.Join([]string{title, hints, "", body}, "\n"))
+	actions, actionLine := dashboard.actionList()
+	page := strings.Join([]string{overview, resources, actions}, "\n")
+	focusLine := lipgloss.Height(overview) + lipgloss.Height(resources) + 2 + actionLine
+	body, above, below := dashboard.viewport(page, focusLine)
+	view := tea.NewView(strings.Join([]string{title, hints, above, body, below}, "\n"))
 	view.AltScreen = true
 	view.WindowTitle = "Local LLM"
 	return view
 }
 
-func (dashboard *Dashboard) actionList() string {
-	lines := make([]string, 0, len(actionLabels)+3)
-	for index, label := range actionLabels {
-		line := "  " + label
+func (dashboard *Dashboard) viewport(content string, focusLine int) (string, string, string) {
+	height := max(1, dashboard.height-4)
+	window := viewport.New(viewport.WithWidth(dashboard.width), viewport.WithHeight(height))
+	window.FillHeight = true
+	window.SetContent(content)
+	window.SetYOffset(dashboard.scrollOffset)
+	window.EnsureVisible(focusLine, 0, dashboard.width)
+	dashboard.scrollOffset = window.YOffset()
+	indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Width(dashboard.width).PaddingLeft(2)
+	above := ""
+	if !window.AtTop() {
+		above = indicator.Render("↑ more")
+	}
+	below := ""
+	if !window.AtBottom() {
+		below = indicator.Render("↓ more")
+	}
+	return window.View(), above, below
+}
+
+func (dashboard *Dashboard) actionList() (string, int) {
+	lines := make([]string, 0, len(actionDefinitions)+8)
+	focusLine := 0
+	section := ""
+	for index, definition := range actionDefinitions {
+		if definition.section != section {
+			section = definition.section
+			if len(lines) > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, dashboard.sectionHeading(section))
+		}
+		line := "  " + definition.label
 		if index == dashboard.actionSelected {
-			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("› " + label)
+			line = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Background(lipgloss.Color("24")).Padding(0, 1).Width(max(1, dashboard.width-4)).Render("› " + definition.label)
+			focusLine = len(lines)
 		}
 		lines = append(lines, line)
 	}
 	if dashboard.pickerAction >= 0 {
-		lines = append(lines, "", dashboard.modelPicker())
+		picker, pickerLine := dashboard.modelPicker()
+		lines = append(lines, "")
+		if pickerLine >= 0 {
+			focusLine = len(lines) + pickerLine
+		}
+		lines = append(lines, picker)
 	}
 	lines = append(lines, "", lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(dashboard.activity))
-	return lipgloss.NewStyle().Width(dashboard.width).Padding(1, 2).Render(strings.Join(lines, "\n"))
+	return lipgloss.NewStyle().Width(dashboard.width).Padding(1, 2).Render(strings.Join(lines, "\n")), focusLine + 1
 }
 
-func (dashboard *Dashboard) modelPicker() string {
+func (dashboard *Dashboard) sectionHeading(section string) string {
+	lineLength := max(1, dashboard.width-len(section)-6)
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(section + " " + strings.Repeat("─", lineLength))
+}
+
+func (dashboard *Dashboard) modelPicker() (string, int) {
 	purpose := map[action]string{
 		downloadModelAction: "Choose a model to download",
 		selectModelAction:   "Choose the default model",
 		deleteModelAction:   "Choose a model to delete",
 	}[dashboard.pickerAction]
 	lines := []string{purpose}
+	focusLine := -1
 	for index, model := range dashboard.models {
 		marker := " "
 		if index == dashboard.modelSelected {
 			marker = "›"
+			focusLine = len(lines)
 		}
 		installed := ""
 		if dashboard.snapshot.Installed[model.Name] {
@@ -357,7 +409,7 @@ func (dashboard *Dashboard) modelPicker() string {
 		}
 		lines = append(lines, fmt.Sprintf("%s %s  •  %s%s", marker, model.Name, model.Size, installed))
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), focusLine
 }
 
 func (dashboard *Dashboard) panel(title, body string, width int) string {
