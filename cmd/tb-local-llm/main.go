@@ -192,7 +192,11 @@ func run(arguments []string) error {
 }
 
 func ollamaClient() *ollama.Client {
-	return ollama.New("http://127.0.0.1:11434", &http.Client{Timeout: 2 * time.Second})
+	return ollamaClientFor("http://127.0.0.1:11434")
+}
+
+func ollamaClientFor(baseURL string) *ollama.Client {
+	return ollama.New(baseURL, &http.Client{})
 }
 
 func snapshot(client *ollama.Client) ui.Snapshot {

@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
 
 func TestFormatGPUStatusUsesReadableUtilizationAndVRAM(t *testing.T) {
 	got := formatGPUStatus("NVIDIA GeForce RTX 3060, 0, 763, 12288\nNVIDIA GeForce RTX 4070, 5, 12282, 12282")
@@ -13,5 +19,20 @@ func TestFormatGPUStatusUsesReadableUtilizationAndVRAM(t *testing.T) {
 func TestFormatGPUStatusRejectsMalformedRows(t *testing.T) {
 	if got := formatGPUStatus("NVIDIA GPU, unavailable"); got != "Unavailable" {
 		t.Fatalf("formatGPUStatus() = %q, want Unavailable", got)
+	}
+}
+
+func TestOllamaClientForAllowsLongRunningPullStreams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/pull" {
+			t.Fatalf("path = %q, want /api/pull", request.URL.Path)
+		}
+		time.Sleep(25 * time.Millisecond)
+		_, _ = writer.Write([]byte("{\"status\":\"success\"}\n"))
+	}))
+	defer server.Close()
+
+	if err := ollamaClientFor(server.URL).Pull(context.Background(), "local:4b", nil); err != nil {
+		t.Fatalf("Pull() = %v, want long-running stream to complete", err)
 	}
 }
