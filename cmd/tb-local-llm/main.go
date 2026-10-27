@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -185,9 +186,7 @@ func run(arguments []string) error {
 			if err != nil {
 				return nil, err
 			}
-			command := exec.Command(path, "--model", "ollama/"+saved.SelectedModel)
-			command.Dir = project
-			return command, nil
+			return openCodeSessionCommand(path, project, saved.SelectedModel), nil
 		},
 		Refresh: func() ui.Snapshot { return snapshot(client) },
 	}
@@ -314,4 +313,14 @@ func openCodePath() (string, error) {
 		return path, nil
 	}
 	return "", fmt.Errorf("OpenCode is missing; run tb install-opencode")
+}
+
+func openCodeSessionCommand(path, project, model string) *exec.Cmd {
+	settings, _ := json.Marshal(struct {
+		Model string `json:"model"`
+	}{Model: "ollama/" + model})
+	command := exec.Command(path)
+	command.Dir = project
+	command.Env = append(os.Environ(), "OPENCODE_CONFIG_CONTENT="+string(settings))
+	return command
 }

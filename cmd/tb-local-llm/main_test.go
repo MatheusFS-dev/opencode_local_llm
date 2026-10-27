@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 )
@@ -34,5 +35,19 @@ func TestOllamaClientForAllowsLongRunningPullStreams(t *testing.T) {
 
 	if err := ollamaClientFor(server.URL).Pull(context.Background(), "local:4b", nil); err != nil {
 		t.Fatalf("Pull() = %v, want long-running stream to complete", err)
+	}
+}
+
+func TestOpenCodeSessionCommandSetsTheInteractiveSessionModelThroughConfig(t *testing.T) {
+	command := openCodeSessionCommand("/usr/local/bin/opencode", "/workspace/project", "huihui_ai/qwen3.5-abliterated:9b")
+
+	if got, want := command.Args, []string{"/usr/local/bin/opencode"}; !slices.Equal(got, want) {
+		t.Fatalf("Args = %q, want %q", got, want)
+	}
+	if got, want := command.Dir, "/workspace/project"; got != want {
+		t.Fatalf("Dir = %q, want %q", got, want)
+	}
+	if !slices.Contains(command.Env, `OPENCODE_CONFIG_CONTENT={"model":"ollama/huihui_ai/qwen3.5-abliterated:9b"}`) {
+		t.Fatalf("interactive session environment does not set the selected Ollama model: %q", command.Env)
 	}
 }
