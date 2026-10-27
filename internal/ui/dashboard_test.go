@@ -28,6 +28,7 @@ func TestDashboardShowsStatusPanelsAndActionList(t *testing.T) {
 		"MAINTENANCE",
 		"Set up Ollama",
 		"Start OpenCode session",
+		"How do I run Maestro?",
 		"Stop managed Ollama server",
 		"Configure model storage",
 		"Download a model",
@@ -43,6 +44,29 @@ func TestDashboardShowsStatusPanelsAndActionList(t *testing.T) {
 		if strings.Contains(view, removed) {
 			t.Fatalf("view unexpectedly contains %q:\n%s", removed, view)
 		}
+	}
+}
+
+func TestDashboardShowsMaestroQuickStartWithoutConfirmation(t *testing.T) {
+	dashboard := New(config.Config{ContextLength: 16384}, nil)
+	for range 7 {
+		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	view := dashboard.View().Content
+	for _, expected := range []string{
+		"HOW DO I RUN MAESTRO?",
+		"codex --profile maestro",
+		"claude --agent maestro",
+		"select the `maestro` agent",
+		"[Enter] Back",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("Maestro guide missing %q:\n%s", expected, view)
+		}
+	}
+	if strings.Contains(view, "[Enter] Confirm") {
+		t.Fatalf("Maestro guide must be read-only, not a confirmation screen:\n%s", view)
 	}
 }
 

@@ -48,6 +48,7 @@ const (
 	deleteModelAction
 	resetConfigurationAction
 	configureStorageAction
+	maestroGuideAction
 )
 
 type actionDefinition struct {
@@ -64,6 +65,7 @@ var actionDefinitions = []actionDefinition{
 	{label: "Choose default model", section: "MODELS", kind: selectModelAction},
 	{label: "Delete a model", section: "MODELS", kind: deleteModelAction},
 	{label: "Start OpenCode session", section: "WORK", kind: launchOpenCodeAction},
+	{label: "How do I run Maestro?", section: "WORK", kind: maestroGuideAction},
 	{label: "Stop managed Ollama server", section: "MAINTENANCE", kind: stopServerAction},
 	{label: "Reset local configuration", section: "MAINTENANCE", kind: resetConfigurationAction},
 }
@@ -163,6 +165,7 @@ const (
 	projectScreen
 	downloadScreen
 	resultScreen
+	maestroGuideScreen
 )
 
 type operationMsg struct {
@@ -282,6 +285,11 @@ func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			dashboard.activeScreen = menuScreen
 		}
 		return dashboard, nil
+	case maestroGuideScreen:
+		if value.Code == tea.KeyEnter || value.Code == tea.KeyEscape {
+			dashboard.activeScreen = menuScreen
+		}
+		return dashboard, nil
 	case confirmScreen:
 		return dashboard.confirm(value)
 	case pickerScreen:
@@ -329,6 +337,8 @@ func (dashboard *Dashboard) selectAction() tea.Cmd {
 		dashboard.openPicker(actionDefinitions[dashboard.actionSelected].kind, dashboard.installedModels())
 	case launchOpenCodeAction:
 		dashboard.openProject()
+	case maestroGuideAction:
+		dashboard.activeScreen = maestroGuideScreen
 	}
 	return nil
 }
@@ -621,6 +631,23 @@ func (dashboard *Dashboard) actionScreen() string {
 		return dashboard.wrap(strings.Join([]string{heading, "", "Where should new Ollama models be stored?", "", dashboard.input.View(), dim.Render("Required: an absolute writable directory."), "", "[Enter] Save location   [Esc] Cancel"}, "\n"))
 	case projectScreen:
 		return dashboard.wrap(strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n"))
+	case maestroGuideScreen:
+		return dashboard.wrap(strings.Join([]string{
+			heading,
+			"",
+			"Maestro plans and reviews coding tasks. It delegates implementation to your configured local OpenCode and Ollama worker.",
+			"",
+			"Codex",
+			"  codex --profile maestro",
+			"",
+			"Claude Code",
+			"  claude --agent maestro",
+			"",
+			"Antigravity",
+			"  select the `maestro` agent, then describe the coding task.",
+			"",
+			"[Enter] Back   [Esc] Back",
+		}, "\n"))
 	}
 	return ""
 }
@@ -742,6 +769,8 @@ func (dashboard *Dashboard) screenTitle() string {
 		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
 	case resultScreen:
 		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
+	case maestroGuideScreen:
+		return "HOW DO I RUN MAESTRO?"
 	}
 	return "LOCAL LLM"
 }
