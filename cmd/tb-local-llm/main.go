@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,23 +15,32 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/MatheusFS-dev/opencode_local_llm/internal/application"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/config"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/models"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/ollama"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/server"
+	"github.com/MatheusFS-dev/opencode_local_llm/internal/terminal"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/ui"
-	"github.com/MatheusFS-dev/opencode_local_llm/internal/worker"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "tb-local-llm ERROR:", err)
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		output := terminal.Output{Writer: os.Stderr, Tool: "local-llm"}
+		_ = output.Message("ERROR", err.Error())
 		os.Exit(1)
 	}
 }
 
 func run(arguments []string) error {
+	if len(arguments) == 1 && arguments[0] == "repair-sandbox" {
+		return runSandboxRepair()
+	}
+	if len(arguments) > 0 && (arguments[0] == "maestro-context" || arguments[0] == "maestro-guard") {
+		return runControllerHelper(arguments)
+	}
 	configRoot, err := os.UserConfigDir()
 	if err != nil {
 		return err
@@ -46,38 +56,13 @@ func run(arguments []string) error {
 	settingsPath := filepath.Join(configRoot, "opencode-local-llm", "config.json")
 	statePath := filepath.Join(configRoot, "opencode-local-llm", "server.json")
 	defaults := config.Default(dataRoot)
+	if len(arguments) > 0 && (arguments[0] == "maestro" || arguments[0] == "maestro-job" || arguments[0] == "job" || arguments[0] == "maestro-mcp") {
+		return runMaestroCLI(arguments, settingsPath, statePath, defaults)
+	}
 	if len(arguments) > 0 && arguments[0] == "worker" {
-		ollamaPath, err := exec.LookPath("ollama")
+		app, err := workerApplication(settingsPath, statePath, defaults)
 		if err != nil {
-			return fmt.Errorf("Ollama is missing; run tb local-llm and choose Set up Ollama")
-		}
-		openCodePath, err := openCodePath()
-		if err != nil {
-			return fmt.Errorf("OpenCode is missing; run tb install-opencode")
-		}
-		app := application.Application{
-			ConfigPath: settingsPath,
-			Defaults:   defaults,
-			EnsureServer: func(settings config.Config) error {
-				ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
-				defer cancel()
-				return (server.Manager{StatePath: statePath}).Ensure(ctx, ollamaPath, settings)
-			},
-			ValidateSelectedModel: func(ctx context.Context, selected string) error {
-				installed, err := ollamaClient().Installed(ctx)
-				if err != nil {
-					return err
-				}
-				for _, model := range installed {
-					if model.Name == selected {
-						return nil
-					}
-				}
-				return fmt.Errorf("%s is not installed; choose or download it in tb local-llm", selected)
-			},
-			ExecuteWorker: func(ctx context.Context, request worker.Request, output, errorOutput io.Writer) error {
-				return worker.Run(ctx, openCodePath, request, output, errorOutput)
-			},
+			return err
 		}
 		return app.RunWorker(context.Background(), arguments[1:], os.Stdout, os.Stderr)
 	}
@@ -109,6 +94,13 @@ func run(arguments []string) error {
 	}
 	client := ollamaClient()
 	actions := ui.Actions{
+		RepairSandbox: func() (*exec.Cmd, error) {
+			self, err := os.Executable()
+			if err != nil {
+				return nil, err
+			}
+			return exec.Command(self, "repair-sandbox"), nil
+		},
 		Setup: func() error {
 			if path := ollamaPath(); path != "" {
 				return fmt.Errorf("Ollama is already installed at %s", path)
@@ -116,7 +108,23 @@ func run(arguments []string) error {
 			return installOllama()
 		},
 		Start: ensure,
-		Stop:  manager.Stop,
+		ListModels: func() ([]string, error) {
+			if err := ensure(); err != nil {
+				return nil, err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			installed, err := client.Installed(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("query configured Ollama server: %w; retry Start managed Ollama server", err)
+			}
+			names := make([]string, 0, len(installed))
+			for _, model := range installed {
+				names = append(names, model.Name)
+			}
+			return names, nil
+		},
+		Stop: manager.Stop,
 		Reset: func() (config.Config, error) {
 			if err := manager.Stop(); err != nil && !strings.Contains(err.Error(), "no managed Ollama server is running") {
 				return config.Config{}, err
@@ -142,17 +150,34 @@ func run(arguments []string) error {
 			if err := config.Save(settingsPath, saved); err != nil {
 				return config.Config{}, err
 			}
+			ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+			defer cancel()
+			if _, err := manager.StopAndWait(ctx); err != nil {
+				return config.Config{}, fmt.Errorf("apply model storage configuration: %w", err)
+			}
+			return saved, nil
+		},
+		SetContext: func(length int) (config.Config, error) {
+			updated := saved
+			updated.ContextLength = length
+			if err := config.Save(settingsPath, updated); err != nil {
+				return config.Config{}, err
+			}
+			saved = updated
 			return saved, nil
 		},
 		Download: func(model string, report func(ui.DownloadProgress)) error {
 			if err := ensure(); err != nil {
 				return err
 			}
-			return client.Pull(context.Background(), model, func(progress ollama.Progress) {
+			if err := client.Pull(context.Background(), model, func(progress ollama.Progress) {
 				if report != nil {
 					report(ui.DownloadProgress{Status: progress.Status, Completed: progress.Completed, Total: progress.Total})
 				}
-			})
+			}); err != nil {
+				return err
+			}
+			return verifyDownload(client, saved.ModelDirectory, model)
 		},
 		Delete: func(model string) error {
 			if err := ensure(); err != nil {
@@ -198,14 +223,69 @@ func ollamaClient() *ollama.Client {
 	return ollamaClientFor("http://127.0.0.1:11434")
 }
 
+func verifyDownload(client *ollama.Client, directory, model string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	installed, err := client.Installed(ctx)
+	if err != nil {
+		return fmt.Errorf("verify downloaded model: %w; restart the managed server and retry the download", err)
+	}
+	found := false
+	for _, item := range installed {
+		if item.Name == model || item.Name == model+":latest" {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("download verification failed: %s is absent from Ollama; restart the managed server and retry the download to %s", model, directory)
+	}
+	name, tag, tagged := strings.Cut(model, ":")
+	if !tagged {
+		tag = "latest"
+	}
+	if !strings.Contains(name, "/") {
+		name = "library/" + name
+	}
+	manifestPath := filepath.Join(directory, "manifests", "registry.ollama.ai", filepath.FromSlash(name), tag)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("download storage mismatch: %s is listed by Ollama but its manifest is unavailable in %s: %w; configure this directory, restart the managed server, and retry the download", model, directory, err)
+	}
+	type blob struct {
+		Digest string `json:"digest"`
+		Size   int64  `json:"size"`
+	}
+	var manifest struct {
+		Config blob   `json:"config"`
+		Layers []blob `json:"layers"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("invalid downloaded manifest: %w; retry the download", err)
+	}
+	if len(manifest.Layers) == 0 {
+		return fmt.Errorf("downloaded manifest has no model layers; retry the download")
+	}
+	for _, entry := range append(manifest.Layers, manifest.Config) {
+		if !strings.HasPrefix(entry.Digest, "sha256:") || strings.ContainsAny(entry.Digest, "/\\") || entry.Size <= 0 {
+			return fmt.Errorf("invalid model blob metadata; retry the download")
+		}
+		info, err := os.Stat(filepath.Join(directory, "blobs", strings.ReplaceAll(entry.Digest, ":", "-")))
+		if err != nil || !info.Mode().IsRegular() || info.Size() != entry.Size {
+			return fmt.Errorf("download verification failed: missing or incomplete blob %s in %s; retry the download to repair model storage", entry.Digest, directory)
+		}
+	}
+	return nil
+}
+
 func ollamaClientFor(baseURL string) *ollama.Client {
 	return ollama.New(baseURL, &http.Client{})
 }
 
 func snapshot(client *ollama.Client) ui.Snapshot {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	gpu := gpuStatus()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	snapshot := ui.Snapshot{Server: "stopped", GPU: gpuStatus(), LoadedVRAM: "Unavailable", Installed: map[string]bool{}}
+	snapshot := ui.Snapshot{Server: "stopped", GPU: gpu, LoadedVRAM: "Unavailable", Installed: map[string]bool{}}
 	if err := client.Healthy(ctx); err != nil {
 		return snapshot
 	}
@@ -214,6 +294,8 @@ func snapshot(client *ollama.Client) ui.Snapshot {
 		for _, model := range installed {
 			snapshot.Installed[model.Name] = true
 		}
+	} else {
+		snapshot.ModelError = err.Error()
 	}
 	if loaded, err := client.Loaded(ctx); err == nil && len(loaded) > 0 {
 		snapshot.LoadedVRAM = bytes(loaded[0].VRAMBytes)

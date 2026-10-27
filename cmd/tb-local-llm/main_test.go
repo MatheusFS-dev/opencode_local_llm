@@ -4,10 +4,56 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 )
+
+func TestVerifyDownloadRejectsMissingAPIModelOrStorage(t *testing.T) {
+	for _, tags := range []string{`{"models":[]}`, `{"models":[{"name":"local:4b"}]}`} {
+		t.Run(tags, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(tags)) }))
+			defer server.Close()
+			if err := verifyDownload(ollamaClientFor(server.URL), t.TempDir(), "local:4b"); err == nil {
+				t.Fatal("unverified download reported success")
+			}
+		})
+	}
+}
+
+func TestVerifyDownloadAcceptsInstalledModelWithCompleteStorage(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "manifests", "registry.ollama.ai", "library", "local", "4b")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "blobs"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifest, []byte(`{"config":{"digest":"sha256:abc","size":2},"layers":[{"digest":"sha256:def","size":3}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for digest, data := range map[string]string{"abc": "{}", "def": "abc"} {
+		if err := os.WriteFile(filepath.Join(root, "blobs", "sha256-"+digest), []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"models":[{"name":"local:4b"}]}`))
+	}))
+	defer server.Close()
+	if err := verifyDownload(ollamaClientFor(server.URL), root, "local:4b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(root, "blobs", "sha256-def"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyDownload(ollamaClientFor(server.URL), root, "local:4b"); err == nil {
+		t.Fatal("truncated blob accepted")
+	}
+}
 
 func TestFormatGPUStatusUsesReadableUtilizationAndVRAM(t *testing.T) {
 	got := formatGPUStatus("NVIDIA GeForce RTX 3060, 0, 763, 12288\nNVIDIA GeForce RTX 4070, 5, 12282, 12282")
