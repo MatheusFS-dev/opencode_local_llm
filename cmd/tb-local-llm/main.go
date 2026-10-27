@@ -143,11 +143,15 @@ func run(arguments []string) error {
 			}
 			return saved, nil
 		},
-		Download: func(model string) error {
+		Download: func(model string, report func(ui.DownloadProgress)) error {
 			if err := ensure(); err != nil {
 				return err
 			}
-			return client.Pull(context.Background(), model, nil)
+			return client.Pull(context.Background(), model, func(progress ollama.Progress) {
+				if report != nil {
+					report(ui.DownloadProgress{Status: progress.Status, Completed: progress.Completed, Total: progress.Total})
+				}
+			})
 		},
 		Delete: func(model string) error {
 			if err := ensure(); err != nil {

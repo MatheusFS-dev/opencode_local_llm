@@ -29,7 +29,7 @@ type Actions struct {
 	Stop       func() error
 	Reset      func() (config.Config, error)
 	SetStorage func(string) (config.Config, error)
-	Download   func(string) error
+	Download   func(string, func(DownloadProgress)) error
 	Delete     func(string) error
 	Select     func(string) error
 	Launch     func(string) (*exec.Cmd, error)
@@ -161,6 +161,7 @@ const (
 	rankingScreen
 	storageScreen
 	projectScreen
+	downloadScreen
 	resultScreen
 )
 
@@ -172,6 +173,17 @@ type operationMsg struct {
 
 type refreshMsg Snapshot
 type launchFinishedMsg struct{ err error }
+type downloadProgressMsg struct {
+	progress DownloadProgress
+	updates  <-chan DownloadProgress
+}
+
+// DownloadProgress describes one streamed Ollama model download update.
+type DownloadProgress struct {
+	Status    string
+	Completed int64
+	Total     int64
+}
 
 // Dashboard presents local model setup and runtime state in the terminal.
 type Dashboard struct {
@@ -188,6 +200,7 @@ type Dashboard struct {
 	pendingAction  action
 	input          textinput.Model
 	result         string
+	downloadStatus DownloadProgress
 	scrollOffset   int
 	rankingOffset  int
 	width          int
@@ -242,6 +255,9 @@ func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		dashboard.activeScreen = resultScreen
 		return dashboard, dashboard.refresh()
+	case downloadProgressMsg:
+		dashboard.downloadStatus = value.progress
+		return dashboard, waitForDownloadProgress(value.updates)
 	case tea.KeyPressMsg:
 		return dashboard.key(value)
 	case tea.PasteMsg:
@@ -392,7 +408,9 @@ func (dashboard *Dashboard) confirm(value tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case stopServerAction:
 		return dashboard, dashboard.operation("Managed Ollama server stopped", dashboard.actions.Stop)
 	case downloadModelAction:
-		return dashboard, dashboard.operation("Model download", func() error { return dashboard.callDownload(model) })
+		dashboard.activeScreen = downloadScreen
+		dashboard.downloadStatus = DownloadProgress{Status: "Preparing download"}
+		return dashboard, dashboard.download(model)
 	case selectModelAction:
 		return dashboard, dashboard.operation("Default model selected", func() error { return dashboard.callSelect(model) })
 	case deleteModelAction:
@@ -463,6 +481,30 @@ func (dashboard *Dashboard) operation(name string, action func() error) tea.Cmd 
 	return func() tea.Msg { return operationMsg{name: name, err: action()} }
 }
 
+func (dashboard *Dashboard) download(model string) tea.Cmd {
+	updates := make(chan DownloadProgress, 1)
+	return tea.Batch(
+		waitForDownloadProgress(updates),
+		func() tea.Msg {
+			err := dashboard.callDownload(model, func(progress DownloadProgress) {
+				updates <- progress
+			})
+			close(updates)
+			return operationMsg{name: "Model download", err: err}
+		},
+	)
+}
+
+func waitForDownloadProgress(updates <-chan DownloadProgress) tea.Cmd {
+	return func() tea.Msg {
+		progress, ok := <-updates
+		if !ok {
+			return nil
+		}
+		return downloadProgressMsg{progress: progress, updates: updates}
+	}
+}
+
 func (dashboard *Dashboard) refresh() tea.Cmd {
 	return func() tea.Msg { return refreshMsg(dashboard.readSnapshot()) }
 }
@@ -489,14 +531,14 @@ func (dashboard *Dashboard) installedModels() []models.Entry {
 	return entries
 }
 
-func (dashboard *Dashboard) callDownload(model string) error {
+func (dashboard *Dashboard) callDownload(model string, report func(DownloadProgress)) error {
 	if model == "" {
 		return fmt.Errorf("select a catalog model first")
 	}
 	if dashboard.actions.Download == nil {
 		return fmt.Errorf("model download is unavailable")
 	}
-	return dashboard.actions.Download(model)
+	return dashboard.actions.Download(model, report)
 }
 
 func (dashboard *Dashboard) callDelete(model string) error {
@@ -554,6 +596,8 @@ func (dashboard *Dashboard) actionScreen() string {
 	switch dashboard.activeScreen {
 	case resultScreen:
 		return dashboard.wrap(strings.Join([]string{heading, "", dashboard.result, "", "[Enter] Back"}, "\n"))
+	case downloadScreen:
+		return dashboard.downloadView(heading)
 	case confirmScreen:
 		return dashboard.wrap(strings.Join([]string{heading, "", dashboard.confirmationDescription(), "", "[Enter] Confirm   [Esc] Cancel"}, "\n"))
 	case pickerScreen:
@@ -579,6 +623,28 @@ func (dashboard *Dashboard) actionScreen() string {
 		return dashboard.wrap(strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n"))
 	}
 	return ""
+}
+
+func (dashboard *Dashboard) downloadView(heading string) string {
+	lines := []string{heading, "", "Downloading " + dashboard.current().Name + " to " + dashboard.config.ModelDirectory + ".", "", "Status: " + dashboard.downloadStatus.Status}
+	if dashboard.downloadStatus.Total > 0 {
+		percent := dashboard.downloadStatus.Completed * 100 / dashboard.downloadStatus.Total
+		lines = append(lines, fmt.Sprintf("Progress: %s / %s (%d%%)", formatBytes(dashboard.downloadStatus.Completed), formatBytes(dashboard.downloadStatus.Total), percent))
+	}
+	lines = append(lines, "", "Download in progress. Please wait.")
+	return dashboard.wrap(strings.Join(lines, "\n"))
+}
+
+func formatBytes(value int64) string {
+	const mib = 1024 * 1024
+	const gib = 1024 * mib
+	if value >= gib {
+		return fmt.Sprintf("%.1f GiB", float64(value)/gib)
+	}
+	if value >= mib {
+		return fmt.Sprintf("%.0f MiB", float64(value)/mib)
+	}
+	return fmt.Sprintf("%d B", value)
 }
 
 func (dashboard *Dashboard) rankingView() string {
@@ -670,6 +736,8 @@ func (dashboard *Dashboard) screenTitle() string {
 		return "CONFIGURE MODEL STORAGE"
 	case projectScreen:
 		return "START OPENCODE SESSION"
+	case downloadScreen:
+		return "DOWNLOADING A MODEL"
 	case confirmScreen:
 		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
 	case resultScreen:

@@ -65,6 +65,58 @@ func TestDashboardKeepsOperationFailureOnFocusedResultScreen(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsDownloadProgressWhilePullRuns(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, []models.Entry{{Name: "catalog:4b", Size: "4 GB"}}, Actions{
+		Download: func(_ string, report func(DownloadProgress)) error {
+			close(started)
+			report(DownloadProgress{Status: "downloading", Completed: 1024, Total: 2048})
+			<-release
+			return nil
+		},
+	})
+	dashboard.openPicker(downloadModelAction, dashboard.models)
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, command := dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	commands, ok := command().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("starting a download must wait for progress and completion concurrently")
+	}
+	completed := make(chan tea.Msg, len(commands))
+	for _, work := range commands {
+		go func() { completed <- work() }()
+	}
+	<-started
+
+	view := dashboard.View().Content
+	for _, expected := range []string{"DOWNLOADING A MODEL", "Downloading catalog:4b", "Download in progress"} {
+		if !strings.Contains(view, expected) {
+			close(release)
+			for range commands {
+				<-completed
+			}
+			t.Fatalf("running download must show progress instead of the confirmation screen, missing %q:\n%s", expected, view)
+		}
+	}
+	progress := <-completed
+	dashboard.Update(progress)
+	view = dashboard.View().Content
+	for _, expected := range []string{"Status: downloading", "Progress: 1024 B / 2048 B (50%)"} {
+		if !strings.Contains(view, expected) {
+			close(release)
+			<-completed
+			t.Fatalf("running download must render streamed progress, missing %q:\n%s", expected, view)
+		}
+	}
+
+	close(release)
+	for range len(commands) - 1 {
+		message := <-completed
+		dashboard.Update(message)
+	}
+}
+
 func TestDashboardRequiresStorageConfigurationBeforeDownload(t *testing.T) {
 	dashboard := New(config.Config{ContextLength: 16384}, []models.Entry{{Name: "catalog:4b", Size: "4 GB"}})
 	for range 3 {
