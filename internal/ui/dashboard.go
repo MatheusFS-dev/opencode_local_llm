@@ -73,37 +73,37 @@ const modelRanking = `RTX 4090: 24 GB
 1. huihui_ai/Qwen3.8-abliterated:27b
    Download: 18 GB
    Disk necessary: 25 GB
-   VRAM required: 24 GB
+   Average VRAM: 22 GB
    Context: 16–32K
 2. qwen3.8:27b
    Download: 18 GB
    Disk necessary: 25 GB
-   VRAM required: 24 GB
+   Average VRAM: 22 GB
    Context: 16–32K
 3. huihui_ai/Qwen3.6-abliterated:27b
    Download: 17 GB
    Disk necessary: 24 GB
-   VRAM required: 24 GB
+   Average VRAM: 21 GB
    Context: 16–32K
 4. huihui_ai/glm-4.7-flash-abliterated
    Download: 19 GB
    Disk necessary: 27 GB
-   VRAM required: 24 GB
+   Average VRAM: 23 GB
    Context: 16–32K
 5. qwen3-coder:30b
    Download: 19 GB
    Disk necessary: 27 GB
-   VRAM required: 24 GB
+   Average VRAM: 20 GB
    Context: 16–32K
 6. huihui_ai/gpt-oss-abliterated:20b
    Download: 14 GB
    Disk necessary: 20 GB
-   VRAM required: 24 GB
+   Average VRAM: 22 GB
    Context: 32–64K
 7. gpt-oss:20b
    Download: 14 GB
    Disk necessary: 20 GB
-   VRAM required: 24 GB
+   Average VRAM: 22 GB
    Context: 32–64K
 
 RTX 4070 Ti: 12 GB
@@ -111,22 +111,22 @@ RTX 4070 Ti: 12 GB
 1. huihui_ai/gemma-4-abliterated:12b
    Download: 7.6 GB
    Disk necessary: 11 GB
-   VRAM required: 12 GB
+   Average VRAM: 10–12 GB
    Context: 16–32K
 2. gemma4:12b
    Download: 7.7–8.0 GB
    Disk necessary: 12 GB
-   VRAM required: 12 GB
+   Average VRAM: 10–12 GB
    Context: 16–32K
 3. huihui_ai/qwen3.5-abliterated:9b
    Download: 6.6 GB
    Disk necessary: 10 GB
-   VRAM required: 12 GB
+   Average VRAM: 8–10 GB
    Context: 16–32K
 4. qwen3.5:9b
    Download: 6.6–7.6 GB
    Disk necessary: 11 GB
-   VRAM required: 12 GB
+   Average VRAM: 8–10 GB
    Context: 16–32K
 
 RTX 5070: 8 GB
@@ -134,22 +134,22 @@ RTX 5070: 8 GB
 1. huihui_ai/qwen3.5-abliterated:4B
    Download: 3.3 GB
    Disk necessary: 5 GB
-   VRAM required: 8 GB
+   Average VRAM: 5–6 GB
    Context: 16–32K
 2. qwen3.5:4b
    Download: 3.3–4.0 GB
    Disk necessary: 6 GB
-   VRAM required: 8 GB
+   Average VRAM: 5–6 GB
    Context: 16–32K
 3. huihui_ai/qwen3.5-abliterated:9b
    Download: 6.6 GB
    Disk necessary: 10 GB
-   VRAM required: 8 GB
+   Average VRAM: 8–10 GB
    Context: 4–8K, tight fit
 4. qwen3.5:9b
    Download: 6.6–7.6 GB
    Disk necessary: 11 GB
-   VRAM required: 8 GB
+   Average VRAM: 8–10 GB
    Context: 4–8K, tight fit`
 
 type screen int

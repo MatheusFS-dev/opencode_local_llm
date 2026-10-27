@@ -140,14 +140,14 @@ func TestDashboardShowsGPUModelRankingFromDownloadPicker(t *testing.T) {
 		lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render("huihui_ai/Qwen3.8-abliterated:27b"),
 		"\x1b[38;5;244mDownload: 18 GB",
 		"Disk necessary: 25 GB",
-		"VRAM required: 24 GB",
+		"Average VRAM: 22 GB",
 		"Context: 16–32K",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("GPU ranking missing formatted field %q:\n%s", expected, view)
 		}
 	}
-	verticalFields := regexp.MustCompile(`(?s)\x1b\[38;5;244mDownload: 18 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mDisk necessary: 25 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mVRAM required: 24 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mContext: 16–32K\x1b\[m`)
+	verticalFields := regexp.MustCompile(`(?s)\x1b\[38;5;244mDownload: 18 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mDisk necessary: 25 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mAverage VRAM: 22 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mContext: 16–32K\x1b\[m`)
 	if !verticalFields.MatchString(view) {
 		t.Fatalf("GPU ranking must render model requirements as a vertical list:\n%s", view)
 	}
