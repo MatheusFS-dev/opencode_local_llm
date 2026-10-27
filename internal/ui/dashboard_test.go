@@ -116,6 +116,43 @@ func TestDashboardStylesModelPickerCardsBySelection(t *testing.T) {
 	}
 }
 
+func TestDashboardShowsGPUModelRankingFromDownloadPicker(t *testing.T) {
+	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, []models.Entry{{Name: "catalog:4b"}})
+	dashboard.openPicker(downloadModelAction, dashboard.models)
+	dashboard.Update(tea.KeyPressMsg{Code: '?'})
+	view := dashboard.View().Content
+	for _, expected := range []string{
+		"MODEL RANKING BY GPU",
+		"RTX 4090: 24 GB (best overall)",
+		"huihui_ai/Qwen3.8-abliterated:27b",
+		"[?] or [Esc] Back",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("GPU ranking missing %q:\n%s", expected, view)
+		}
+	}
+	for range 20 {
+		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	view = dashboard.View().Content
+	if !strings.Contains(view, "RTX 4070 Ti: 12 GB") {
+		t.Fatalf("scrolled GPU ranking missing RTX 4070 Ti: 12 GB:\n%s", view)
+	}
+	for range 20 {
+		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	view = dashboard.View().Content
+	for _, expected := range []string{"RTX 5070: 8 GB (as specified)"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("scrolled GPU ranking missing %q:\n%s", expected, view)
+		}
+	}
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if view := dashboard.View().Content; !strings.Contains(view, "DOWNLOAD A MODEL") {
+		t.Fatalf("Esc must return to the download picker:\n%s", view)
+	}
+}
+
 func TestDashboardAcceptsPastedStoragePath(t *testing.T) {
 	dashboard := New(config.Config{ContextLength: 16384}, nil)
 	dashboard.openStorage()

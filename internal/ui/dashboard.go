@@ -68,12 +68,71 @@ var actionDefinitions = []actionDefinition{
 	{label: "Reset local configuration", section: "MAINTENANCE", kind: resetConfigurationAction},
 }
 
+const modelRanking = `Priority: coding-agent reliability, reasoning, fewer refusals, and usable context.
+A = community abliterated (reduced refusals). S = standard.
+Practical starting points only. No listed local model is assumed to match a frontier GPT at High reasoning for difficult, long-horizon tasks.
+
+RTX 4090: 24 GB (best overall)
+
+1. huihui_ai/Qwen3.8-abliterated:27b  •  A
+   Download / installed: 18 GB  •  Reserve free disk: 25 GB  •  Context to test: 16–32K
+   Best first choice for coding and reasoning.
+2. qwen3.8:27b  •  S
+   Download / installed: 18 GB  •  Reserve free disk: 25 GB  •  Context to test: 16–32K
+   Compare for stronger instruction following.
+3. huihui_ai/Qwen3.6-abliterated:27b  •  A
+   Download / installed: 17 GB  •  Reserve free disk: 24 GB  •  Context to test: 16–32K
+   Alternative uncensored coding agent.
+4. huihui_ai/glm-4.7-flash-abliterated  •  A
+   Download / installed: 19 GB  •  Reserve free disk: 27 GB  •  Context to test: 16–32K
+   Fast MoE coding alternative.
+5. qwen3-coder:30b  •  S
+   Download / installed: 19 GB  •  Reserve free disk: 27 GB  •  Context to test: 16–32K
+   Code-focused tool execution.
+6. huihui_ai/gpt-oss-abliterated:20b  •  A
+   Download / installed: 14 GB  •  Reserve free disk: 20 GB  •  Context to test: 32–64K
+   More headroom for context and reasoning.
+7. gpt-oss:20b  •  S
+   Download / installed: 14 GB  •  Reserve free disk: 20 GB  •  Context to test: 32–64K
+   Standard reasoning baseline.
+
+RTX 4070 Ti: 12 GB
+
+1. huihui_ai/gemma-4-abliterated:12b  •  A
+   Download / installed: 7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 16–32K
+2. gemma4:12b  •  S
+   Download / installed: 7.7–8.0 GB  •  Reserve free disk: 12 GB  •  Context to test: 16–32K
+3. huihui_ai/qwen3.5-abliterated:9b  •  A
+   Download / installed: 6.6 GB  •  Reserve free disk: 10 GB  •  Context to test: 16–32K
+4. qwen3.5:9b  •  S
+   Download / installed: 6.6–7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 16–32K
+
+RTX 5070: 8 GB (as specified)
+
+1. huihui_ai/qwen3.5-abliterated:4B  •  A
+   Download / installed: 3.3 GB  •  Reserve free disk: 5 GB  •  Context to test: 16–32K
+2. qwen3.5:4b  •  S
+   Download / installed: 3.3–4.0 GB  •  Reserve free disk: 6 GB  •  Context to test: 16–32K
+3. huihui_ai/qwen3.5-abliterated:9b  •  A
+   Download / installed: 6.6 GB  •  Reserve free disk: 10 GB  •  Context to test: 4–8K, tight fit
+4. qwen3.5:9b  •  S
+   Download / installed: 6.6–7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 4–8K, tight fit
+
+For meaningful autonomous coding on 8 GB, prefer a 4B model with enough context over a heavily memory-constrained 9B model.
+
+Abliteration reduces refusal behavior but does not eliminate all refusals or guarantee code quality. Compare with the standard counterpart before relying on it.
+
+Download / installed is persistent disk footprint after ollama pull, not VRAM. Reserve 30–50% additional disk for pulling and storage overhead. Context ranges are conservative targets to test. Native advertised limits are usually 128K–256K, but KV cache, runtime, parallel requests, and display usage consume additional VRAM.
+
+For multiple installed models, add Download / installed sizes for persistent storage. Also budget for OpenCode, repositories, build dependencies, and test artifacts. On Linux, models normally live in /usr/share/ollama/.ollama/models. Set OLLAMA_MODELS to use a larger SSD. Verify actual use with ollama list and du -sh /usr/share/ollama/.ollama/models.`
+
 type screen int
 
 const (
 	menuScreen screen = iota
 	confirmScreen
 	pickerScreen
+	rankingScreen
 	storageScreen
 	projectScreen
 	resultScreen
@@ -104,6 +163,7 @@ type Dashboard struct {
 	input          textinput.Model
 	result         string
 	scrollOffset   int
+	rankingOffset  int
 	width          int
 	height         int
 }
@@ -184,6 +244,8 @@ func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return dashboard.confirm(value)
 	case pickerScreen:
 		return dashboard.pickModel(value)
+	case rankingScreen:
+		return dashboard.navigateRanking(value)
 	case storageScreen, projectScreen:
 		return dashboard.textEntry(value)
 	}
@@ -251,6 +313,11 @@ func (dashboard *Dashboard) openProject() {
 
 func (dashboard *Dashboard) pickModel(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch value.Code {
+	case '?':
+		if dashboard.pickerAction == downloadModelAction {
+			dashboard.rankingOffset = 0
+			dashboard.activeScreen = rankingScreen
+		}
 	case tea.KeyEscape:
 		dashboard.activeScreen = menuScreen
 	case tea.KeyUp:
@@ -266,6 +333,18 @@ func (dashboard *Dashboard) pickModel(value tea.KeyPressMsg) (tea.Model, tea.Cmd
 			dashboard.pendingAction = dashboard.pickerAction
 			dashboard.activeScreen = confirmScreen
 		}
+	}
+	return dashboard, nil
+}
+
+func (dashboard *Dashboard) navigateRanking(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch value.Code {
+	case '?', tea.KeyEscape:
+		dashboard.activeScreen = pickerScreen
+	case tea.KeyUp:
+		dashboard.rankingOffset = max(0, dashboard.rankingOffset-1)
+	case tea.KeyDown:
+		dashboard.rankingOffset++
 	}
 	return dashboard, nil
 }
@@ -460,14 +539,41 @@ func (dashboard *Dashboard) actionScreen() string {
 				lines = append(lines, dashboard.modelCard(index, model)...)
 			}
 		}
-		lines = append(lines, "", "[↑/↓] Navigate   [Enter] Continue   [Esc] Back")
+		help := ""
+		if dashboard.pickerAction == downloadModelAction {
+			help = "   [?] GPU rankings"
+		}
+		lines = append(lines, "", "[↑/↓] Navigate   [Enter] Continue   [Esc] Back"+help)
 		return dashboard.wrap(strings.Join(lines, "\n"))
+	case rankingScreen:
+		return dashboard.rankingView()
 	case storageScreen:
 		return dashboard.wrap(strings.Join([]string{heading, "", "Where should new Ollama models be stored?", "", dashboard.input.View(), dim.Render("Required: an absolute writable directory."), "", "[Enter] Save location   [Esc] Cancel"}, "\n"))
 	case projectScreen:
 		return dashboard.wrap(strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n"))
 	}
 	return ""
+}
+
+func (dashboard *Dashboard) rankingView() string {
+	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render("MODEL RANKING BY GPU")
+	content := dashboard.wrap(modelRanking)
+	window := viewport.New(viewport.WithWidth(dashboard.width), viewport.WithHeight(max(1, dashboard.height-5)))
+	window.SetContent(content)
+	window.SetYOffset(dashboard.rankingOffset)
+	dashboard.rankingOffset = window.YOffset()
+	indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	lines := []string{heading, ""}
+	if !window.AtTop() {
+		lines = append(lines, indicator.Render(fmt.Sprintf("↑ %d more", window.YOffset())))
+	}
+	lines = append(lines, window.View())
+	if !window.AtBottom() {
+		hiddenLines := window.TotalLineCount() - window.YOffset() - window.VisibleLineCount()
+		lines = append(lines, indicator.Render(fmt.Sprintf("↓ %d more", max(1, hiddenLines))))
+	}
+	lines = append(lines, "", "[↑/↓] Scroll   [?] or [Esc] Back")
+	return strings.Join(lines, "\n")
 }
 
 func (dashboard *Dashboard) modelCard(index int, model models.Entry) []string {
