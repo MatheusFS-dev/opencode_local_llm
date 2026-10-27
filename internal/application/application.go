@@ -26,6 +26,7 @@ func (application Application) RunWorker(ctx context.Context, arguments []string
 	project := flags.String("project", "", "project directory")
 	task := flags.String("task", "", "implementation task")
 	criteria := flags.String("criteria", "", "acceptance criteria")
+	verify := flags.String("verify", "", "required bounded shell command that checks the actual deliverable")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -39,7 +40,12 @@ func (application Application) RunWorker(ctx context.Context, arguments []string
 	if saved.SelectedModel == "" {
 		return fmt.Errorf("no local model is selected; run tb local-llm and select an installed model")
 	}
-	request := worker.Request{Project: *project, Task: *task, Criteria: *criteria, Model: saved.SelectedModel}
+	request := worker.Request{Project: *project, Task: *task, Criteria: *criteria, Model: saved.SelectedModel, Verify: *verify, ContextLength: saved.ContextLength}
+	return application.RunRequest(ctx, saved, request, output, errorOutput)
+}
+
+// RunRequest executes a snapshotted job without silently changing its selected model or settings.
+func (application Application) RunRequest(ctx context.Context, saved config.Config, request worker.Request, output, errorOutput io.Writer) error {
 	if _, err := worker.BuildArguments(request); err != nil {
 		return err
 	}

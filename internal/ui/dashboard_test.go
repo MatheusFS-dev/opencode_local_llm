@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -12,6 +13,37 @@ import (
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/config"
 	"github.com/MatheusFS-dev/opencode_local_llm/internal/models"
 )
+
+func TestSandboxRepairRequiresConfirmationAndAllowsCancel(t *testing.T) {
+	calls := 0
+	dashboard := New(config.Config{ContextLength: 16384}, nil, Actions{RepairSandbox: func() (*exec.Cmd, error) { calls++; return exec.Command("true"), nil }})
+	dashboard.Resize(100, 30)
+	dashboard.actionSelected = dashboard.actionIndex(repairSandboxAction)
+	_, command := dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if command != nil || calls != 0 || dashboard.activeScreen != confirmScreen {
+		t.Fatal("repair started before confirmation")
+	}
+	if !strings.Contains(dashboard.View().Content, "sudo") {
+		t.Fatal("missing system permission explanation")
+	}
+	_, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if calls != 0 || dashboard.activeScreen != menuScreen {
+		t.Fatal("cancel started repair")
+	}
+	_, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, command = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if calls != 1 || command == nil {
+		t.Fatal("confirmed repair did not open interactive terminal")
+	}
+	_, _ = dashboard.Update(sandboxRepairFinishedMsg{err: errors.New("exit status 1")})
+	if dashboard.activeScreen != resultScreen || !strings.Contains(dashboard.View().Content, "failed") {
+		t.Fatal("repair failure did not remain on focused result screen")
+	}
+	_, _ = dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if dashboard.activeScreen != menuScreen {
+		t.Fatal("back did not return to menu")
+	}
+}
 
 func TestDashboardShowsStatusPanelsAndActionList(t *testing.T) {
 	dashboard := New(config.Config{ModelDirectory: "/models", SelectedModel: "local:4b", ContextLength: 16384}, []models.Entry{{Name: "local:4b", Size: "4 GB"}})
@@ -47,6 +79,82 @@ func TestDashboardShowsStatusPanelsAndActionList(t *testing.T) {
 	}
 }
 
+func TestDashboardOffersContextWindowChoices(t *testing.T) {
+	dashboard := New(config.Config{ContextLength: 16384}, nil)
+	for index, item := range actionDefinitions {
+		if item.label == "Change context window" {
+			dashboard.actionSelected = index
+			dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			view := dashboard.View().Content
+			for _, expected := range []string{"CONTEXT WINDOW", "16,384", "32,768", "Current"} {
+				if !strings.Contains(view, expected) {
+					t.Fatalf("context picker missing %q:\n%s", expected, view)
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("context window action is missing")
+}
+
+func TestDashboardSavesAndReopensContextWindow(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.json")
+	saved := config.Config{ModelDirectory: filepath.Join(root, "models"), SelectedModel: "local:4b", ContextLength: 16384}
+	if err := config.Save(path, saved); err != nil {
+		t.Fatal(err)
+	}
+	dashboard := New(saved, nil, Actions{SetContext: func(length int) (config.Config, error) {
+		updated := saved
+		updated.ContextLength = length
+		if err := config.Save(path, updated); err != nil {
+			return config.Config{}, err
+		}
+		saved = updated
+		return updated, nil
+	}})
+	for _, length := range []int{32768, 16384} {
+		dashboard.actionSelected = dashboard.actionIndex(configureContextAction)
+		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if length == 32768 {
+			dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		} else {
+			dashboard.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+		}
+		_, command := dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if command == nil {
+			t.Fatal("context selection did not save")
+		}
+		dashboard.Update(command())
+		loaded, err := config.Load(path, config.Default(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.ContextLength != length || loaded.SelectedModel != "local:4b" || loaded.ModelDirectory != saved.ModelDirectory {
+			t.Fatalf("saved settings = %#v", loaded)
+		}
+		if !strings.Contains(dashboard.View().Content, "managed server") {
+			t.Fatal("result must explain when the setting takes effect")
+		}
+		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	}
+}
+
+func TestDashboardCancelsContextChange(t *testing.T) {
+	called := false
+	dashboard := New(config.Config{ContextLength: 16384}, nil, Actions{SetContext: func(int) (config.Config, error) {
+		called = true
+		return config.Config{}, nil
+	}})
+	dashboard.actionSelected = dashboard.actionIndex(configureContextAction)
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if called || dashboard.config.ContextLength != 16384 || dashboard.activeScreen != menuScreen {
+		t.Fatal("cancel changed the context setting")
+	}
+}
+
 func TestDashboardShowsMaestroQuickStartWithoutConfirmation(t *testing.T) {
 	dashboard := New(config.Config{ContextLength: 16384}, nil)
 	for range 7 {
@@ -58,7 +166,7 @@ func TestDashboardShowsMaestroQuickStartWithoutConfirmation(t *testing.T) {
 		"HOW DO I RUN MAESTRO?",
 		"codex --profile maestro",
 		"claude --agent maestro",
-		"select the `maestro` agent",
+		"Use Codex or Claude for worker delegation.",
 		"[Enter] Back",
 	} {
 		if !strings.Contains(view, expected) {
@@ -263,6 +371,49 @@ func TestDashboardAcceptsPastedStoragePath(t *testing.T) {
 	}
 }
 
+func TestDashboardReloadsModelsBeforeOpeningPicker(t *testing.T) {
+	dashboard := New(config.Config{ModelDirectory: "/models"}, nil, Actions{
+		ListModels: func() ([]string, error) { return []string{"downloaded:4b"}, nil },
+	})
+	dashboard.actionSelected = 4
+	command := dashboard.selectAction()
+	if command == nil {
+		t.Fatal("model picker did not request a fresh installed list")
+	}
+	dashboard.Update(command())
+	if !strings.Contains(dashboard.View().Content, "downloaded:4b") {
+		t.Fatal("freshly installed model missing")
+	}
+}
+
+func TestDashboardReportsModelLookupFailure(t *testing.T) {
+	dashboard := New(config.Config{}, nil, Actions{
+		ListModels: func() ([]string, error) { return nil, errors.New("server unavailable") },
+	})
+	dashboard.actionSelected = 4
+	command := dashboard.selectAction()
+	if command == nil {
+		t.Fatal("missing model lookup")
+	}
+	dashboard.Update(command())
+	if view := dashboard.View().Content; !strings.Contains(view, "server unavailable") || strings.Contains(view, "No installed models") {
+		t.Fatalf("lookup failure hidden: %s", view)
+	}
+}
+
+func TestDashboardCancelledModelLookupDoesNotReopenPicker(t *testing.T) {
+	dashboard := New(config.Config{}, nil, Actions{
+		ListModels: func() ([]string, error) { return []string{"local:4b"}, nil },
+	})
+	dashboard.actionSelected = 4
+	command := dashboard.selectAction()
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	dashboard.Update(command())
+	if dashboard.activeScreen != menuScreen {
+		t.Fatal("cancelled lookup reopened the picker")
+	}
+}
+
 func TestDashboardShowsOnlyInstalledModelsForDefaultSelection(t *testing.T) {
 	dashboard := New(config.Config{ModelDirectory: "/models", ContextLength: 16384}, []models.Entry{{Name: "catalog-only:4b", Size: "4 GB"}})
 	dashboard.snapshot.Installed = map[string]bool{"installed:4b": true}
@@ -383,5 +534,59 @@ func TestDashboardWrapsMainScreenTextToTerminalWidth(t *testing.T) {
 		if width := lipgloss.Width(line); width > 30 {
 			t.Fatalf("line width = %d, want at most 30: %q", width, line)
 		}
+	}
+}
+
+func TestOpenCodeLaunchPreparesAsynchronouslyAndShowsFailure(t *testing.T) {
+	calls := 0
+	dashboard := New(config.Config{SelectedModel: "qwen3.5:9b"}, nil, Actions{Launch: func(project string) (*exec.Cmd, error) {
+		calls++
+		if project != "./" {
+			t.Errorf("project = %q", project)
+		}
+		return nil, errors.New("Ollama is unavailable")
+	}})
+	dashboard.openProject()
+	dashboard.input.SetValue("./ ")
+	_, command := dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if command == nil || calls != 0 {
+		t.Fatal("launch preparation must run asynchronously")
+	}
+	if !strings.Contains(dashboard.View().Content, "Preparing OpenCode") {
+		t.Fatal("preparation not visible")
+	}
+	dashboard.Update(command())
+	if dashboard.activeScreen != resultScreen || !strings.Contains(dashboard.View().Content, "Ollama is unavailable") {
+		t.Fatalf("launch failure hidden: %s", dashboard.View().Content)
+	}
+	dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if dashboard.activeScreen != menuScreen {
+		t.Fatal("cannot return from failure")
+	}
+}
+
+func TestOpenCodeProjectPromptShowsManualGuide(t *testing.T) {
+	dashboard := New(config.Config{SelectedModel: "qwen3.5:9b"}, nil)
+	dashboard.Resize(100, 40)
+	dashboard.openProject()
+	for _, text := range []string{"Start manually", "cd --", "opencode", "ollama/qwen3.5:9b"} {
+		if !strings.Contains(dashboard.View().Content, text) {
+			t.Errorf("manual guide missing %q", text)
+		}
+	}
+}
+
+func TestOpenCodePreparedSessionStartsInteractiveProcess(t *testing.T) {
+	dashboard := New(config.Config{}, nil, Actions{Launch: func(string) (*exec.Cmd, error) { return exec.Command("true"), nil }})
+	dashboard.openProject()
+	dashboard.input.SetValue("./")
+	_, prepare := dashboard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, launch := dashboard.Update(prepare())
+	if launch == nil {
+		t.Fatal("prepared session did not start interactive process")
+	}
+	dashboard.Update(launchFinishedMsg{})
+	if dashboard.activeScreen != resultScreen || !strings.Contains(dashboard.View().Content, "OpenCode session completed") {
+		t.Fatal("session completion not visible")
 	}
 }

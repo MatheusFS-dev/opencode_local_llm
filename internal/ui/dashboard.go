@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,20 +22,24 @@ type Snapshot struct {
 	GPU        string
 	LoadedVRAM string
 	Installed  map[string]bool
+	ModelError string
 }
 
 // Actions provides dashboard operations without coupling its view to system APIs.
 type Actions struct {
-	Setup      func() error
-	Start      func() error
-	Stop       func() error
-	Reset      func() (config.Config, error)
-	SetStorage func(string) (config.Config, error)
-	Download   func(string, func(DownloadProgress)) error
-	Delete     func(string) error
-	Select     func(string) error
-	Launch     func(string) (*exec.Cmd, error)
-	Refresh    func() Snapshot
+	RepairSandbox func() (*exec.Cmd, error)
+	Setup         func() error
+	Start         func() error
+	Stop          func() error
+	Reset         func() (config.Config, error)
+	SetStorage    func(string) (config.Config, error)
+	SetContext    func(int) (config.Config, error)
+	Download      func(string, func(DownloadProgress)) error
+	Delete        func(string) error
+	Select        func(string) error
+	Launch        func(string) (*exec.Cmd, error)
+	Refresh       func() Snapshot
+	ListModels    func() ([]string, error)
 }
 
 type action int
@@ -49,6 +55,8 @@ const (
 	resetConfigurationAction
 	configureStorageAction
 	maestroGuideAction
+	configureContextAction
+	repairSandboxAction
 )
 
 type actionDefinition struct {
@@ -68,6 +76,8 @@ var actionDefinitions = []actionDefinition{
 	{label: "How do I run Maestro?", section: "WORK", kind: maestroGuideAction},
 	{label: "Stop managed Ollama server", section: "MAINTENANCE", kind: stopServerAction},
 	{label: "Reset local configuration", section: "MAINTENANCE", kind: resetConfigurationAction},
+	{label: "Change context window", section: "MAINTENANCE", kind: configureContextAction},
+	{label: "Repair Ubuntu Codex sandbox", section: "MAINTENANCE", kind: repairSandboxAction},
 }
 
 const modelRanking = `RTX 4090: 24 GB
@@ -166,6 +176,9 @@ const (
 	downloadScreen
 	resultScreen
 	maestroGuideScreen
+	modelLoadingScreen
+	launchPreparingScreen
+	contextScreen
 )
 
 type operationMsg struct {
@@ -175,7 +188,17 @@ type operationMsg struct {
 }
 
 type refreshMsg Snapshot
+type modelListMsg struct {
+	kind  action
+	names []string
+	err   error
+}
 type launchFinishedMsg struct{ err error }
+type launchPreparedMsg struct {
+	command *exec.Cmd
+	err     error
+}
+type sandboxRepairFinishedMsg struct{ err error }
 type downloadProgressMsg struct {
 	progress DownloadProgress
 	updates  <-chan DownloadProgress
@@ -190,24 +213,25 @@ type DownloadProgress struct {
 
 // Dashboard presents local model setup and runtime state in the terminal.
 type Dashboard struct {
-	config         config.Config
-	models         []models.Entry
-	actions        Actions
-	snapshot       Snapshot
-	activity       string
-	actionSelected int
-	modelSelected  int
-	pickerAction   action
-	choices        []models.Entry
-	activeScreen   screen
-	pendingAction  action
-	input          textinput.Model
-	result         string
-	downloadStatus DownloadProgress
-	scrollOffset   int
-	rankingOffset  int
-	width          int
-	height         int
+	config          config.Config
+	models          []models.Entry
+	actions         Actions
+	snapshot        Snapshot
+	activity        string
+	actionSelected  int
+	modelSelected   int
+	pickerAction    action
+	choices         []models.Entry
+	activeScreen    screen
+	pendingAction   action
+	input           textinput.Model
+	result          string
+	downloadStatus  DownloadProgress
+	scrollOffset    int
+	rankingOffset   int
+	contextSelected int
+	width           int
+	height          int
 }
 
 // New creates a dashboard with persisted configuration and optional operations.
@@ -234,6 +258,21 @@ func (dashboard *Dashboard) Init() tea.Cmd { return dashboard.refresh() }
 // Update handles dashboard keyboard commands and asynchronous action results.
 func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
+	case modelListMsg:
+		if dashboard.activeScreen != modelLoadingScreen {
+			return dashboard, nil
+		}
+		if value.err != nil {
+			dashboard.result = "Read installed models failed: " + value.err.Error()
+			dashboard.activeScreen = resultScreen
+			return dashboard, nil
+		}
+		dashboard.snapshot.Installed = make(map[string]bool)
+		for _, name := range value.names {
+			dashboard.snapshot.Installed[name] = true
+		}
+		dashboard.openPicker(value.kind, dashboard.installedModels())
+		return dashboard, nil
 	case tea.WindowSizeMsg:
 		dashboard.Resize(value.Width, value.Height)
 	case refreshMsg:
@@ -245,11 +284,30 @@ func (dashboard *Dashboard) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if value.err != nil {
 			dashboard.result = fmt.Sprintf("%s failed: %v", value.name, value.err)
+		} else if dashboard.pendingAction == configureContextAction {
+			dashboard.result = fmt.Sprintf("Context window set to %d tokens. The managed server will use it when next started or used.", dashboard.config.ContextLength)
 		} else {
 			dashboard.result = value.name + " completed"
 		}
 		dashboard.activeScreen = resultScreen
 		return dashboard, dashboard.refresh()
+	case sandboxRepairFinishedMsg:
+		dashboard.result = "Ubuntu sandbox profile loaded and Maestro sandbox verification passed."
+		if value.err != nil {
+			dashboard.result = "Sandbox repair failed. Review the terminal output above and resolve the reported error before retrying."
+		}
+		dashboard.activeScreen = resultScreen
+		return dashboard, nil
+	case launchPreparedMsg:
+		if value.err != nil || value.command == nil {
+			dashboard.result = "OpenCode failed: launch command is unavailable"
+			if value.err != nil {
+				dashboard.result = "OpenCode failed: " + value.err.Error()
+			}
+			dashboard.activeScreen = resultScreen
+			return dashboard, nil
+		}
+		return dashboard, tea.ExecProcess(value.command, func(err error) tea.Msg { return launchFinishedMsg{err: err} })
 	case launchFinishedMsg:
 		if value.err != nil {
 			dashboard.result = "OpenCode failed: " + value.err.Error()
@@ -280,6 +338,13 @@ func (dashboard *Dashboard) paste(value tea.PasteMsg) (tea.Model, tea.Cmd) {
 
 func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch dashboard.activeScreen {
+	case launchPreparingScreen:
+		return dashboard, nil
+	case modelLoadingScreen:
+		if value.Code == tea.KeyEscape {
+			dashboard.activeScreen = menuScreen
+		}
+		return dashboard, nil
 	case resultScreen:
 		if value.Code == tea.KeyEnter || value.Code == tea.KeyEscape {
 			dashboard.activeScreen = menuScreen
@@ -294,6 +359,8 @@ func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return dashboard.confirm(value)
 	case pickerScreen:
 		return dashboard.pickModel(value)
+	case contextScreen:
+		return dashboard.pickContext(value)
 	case rankingScreen:
 		return dashboard.navigateRanking(value)
 	case storageScreen, projectScreen:
@@ -322,7 +389,7 @@ func (dashboard *Dashboard) key(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (dashboard *Dashboard) selectAction() tea.Cmd {
 	switch actionDefinitions[dashboard.actionSelected].kind {
-	case setupAction, startServerAction, stopServerAction, resetConfigurationAction:
+	case setupAction, startServerAction, stopServerAction, resetConfigurationAction, repairSandboxAction:
 		dashboard.pendingAction = actionDefinitions[dashboard.actionSelected].kind
 		dashboard.activeScreen = confirmScreen
 	case configureStorageAction:
@@ -334,13 +401,51 @@ func (dashboard *Dashboard) selectAction() tea.Cmd {
 		}
 		dashboard.openPicker(downloadModelAction, dashboard.models)
 	case selectModelAction, deleteModelAction:
+		if dashboard.actions.ListModels != nil {
+			kind := actionDefinitions[dashboard.actionSelected].kind
+			dashboard.pendingAction = kind
+			dashboard.result = "Loading installed models from configured Ollama storage…"
+			dashboard.activeScreen = modelLoadingScreen
+			return func() tea.Msg {
+				names, err := dashboard.actions.ListModels()
+				return modelListMsg{kind: kind, names: names, err: err}
+			}
+		}
 		dashboard.openPicker(actionDefinitions[dashboard.actionSelected].kind, dashboard.installedModels())
 	case launchOpenCodeAction:
 		dashboard.openProject()
 	case maestroGuideAction:
 		dashboard.activeScreen = maestroGuideScreen
+	case configureContextAction:
+		dashboard.pendingAction = configureContextAction
+		dashboard.contextSelected = 0
+		if dashboard.config.ContextLength == 32768 {
+			dashboard.contextSelected = 1
+		}
+		dashboard.activeScreen = contextScreen
 	}
 	return nil
+}
+
+func (dashboard *Dashboard) pickContext(value tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch value.Code {
+	case tea.KeyEscape:
+		dashboard.activeScreen = menuScreen
+	case tea.KeyUp:
+		dashboard.contextSelected = 0
+	case tea.KeyDown:
+		dashboard.contextSelected = 1
+	case tea.KeyEnter:
+		if dashboard.actions.SetContext == nil {
+			return dashboard, dashboard.operation("Context window", nil)
+		}
+		length := []int{16384, 32768}[dashboard.contextSelected]
+		return dashboard, func() tea.Msg {
+			settings, err := dashboard.actions.SetContext(length)
+			return operationMsg{name: "Context window update", err: err, settings: &settings}
+		}
+	}
+	return dashboard, nil
 }
 
 func (dashboard *Dashboard) openPicker(kind action, choices []models.Entry) {
@@ -411,6 +516,15 @@ func (dashboard *Dashboard) confirm(value tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	}
 	model := dashboard.current().Name
 	switch dashboard.pendingAction {
+	case repairSandboxAction:
+		if dashboard.actions.RepairSandbox == nil {
+			return dashboard, dashboard.operation("Ubuntu sandbox repair", nil)
+		}
+		command, err := dashboard.actions.RepairSandbox()
+		if err != nil {
+			return dashboard, func() tea.Msg { return sandboxRepairFinishedMsg{err: err} }
+		}
+		return dashboard, tea.ExecProcess(command, func(err error) tea.Msg { return sandboxRepairFinishedMsg{err: err} })
 	case setupAction:
 		return dashboard, dashboard.operation("Ollama setup", dashboard.actions.Setup)
 	case startServerAction:
@@ -439,7 +553,8 @@ func (dashboard *Dashboard) textEntry(value tea.KeyPressMsg) (tea.Model, tea.Cmd
 	if value.Code == tea.KeyEnter {
 		value := strings.TrimSpace(dashboard.input.Value())
 		if value == "" {
-			dashboard.activity = "A folder is required"
+			dashboard.result = "A folder is required"
+			dashboard.activeScreen = resultScreen
 			return dashboard, nil
 		}
 		if dashboard.activeScreen == storageScreen {
@@ -449,7 +564,7 @@ func (dashboard *Dashboard) textEntry(value tea.KeyPressMsg) (tea.Model, tea.Cmd
 			}
 			return dashboard, func() tea.Msg {
 				settings, err := dashboard.actions.SetStorage(value)
-				return operationMsg{name: "Model storage configured", err: err, settings: &settings}
+				return operationMsg{name: "Model storage configured. The next managed server start will use this directory", err: err, settings: &settings}
 			}
 		}
 		return dashboard, dashboard.launchOpenCode(value)
@@ -460,18 +575,14 @@ func (dashboard *Dashboard) textEntry(value tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (dashboard *Dashboard) launchOpenCode(project string) tea.Cmd {
-	if dashboard.actions.Launch == nil {
-		dashboard.activity = "OpenCode launch is unavailable"
-		return nil
+	dashboard.activeScreen = launchPreparingScreen
+	return func() tea.Msg {
+		if dashboard.actions.Launch == nil {
+			return launchPreparedMsg{err: fmt.Errorf("OpenCode launch is unavailable")}
+		}
+		command, err := dashboard.actions.Launch(project)
+		return launchPreparedMsg{command: command, err: err}
 	}
-	command, err := dashboard.actions.Launch(project)
-	if err != nil {
-		dashboard.activity = "OpenCode failed: " + err.Error()
-		return nil
-	}
-	dashboard.activeScreen = menuScreen
-	dashboard.activity = "Running OpenCode..."
-	return tea.ExecProcess(command, func(err error) tea.Msg { return launchFinishedMsg{err: err} })
 }
 
 func (dashboard *Dashboard) reset() tea.Cmd {
@@ -538,6 +649,7 @@ func (dashboard *Dashboard) installedModels() []models.Entry {
 	for name := range dashboard.snapshot.Installed {
 		entries = append(entries, models.Entry{Name: name, Size: "installed"})
 	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries
 }
 
@@ -604,6 +716,10 @@ func (dashboard *Dashboard) actionScreen() string {
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render(dashboard.screenTitle())
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	switch dashboard.activeScreen {
+	case launchPreparingScreen:
+		return dashboard.wrap(heading + "\n\nPreparing OpenCode and checking the managed Ollama server…")
+	case modelLoadingScreen:
+		return dashboard.wrap(strings.Join([]string{heading, "", dashboard.result, "", "[Esc] Back"}, "\n"))
 	case resultScreen:
 		return dashboard.wrap(strings.Join([]string{heading, "", dashboard.result, "", "[Enter] Back"}, "\n"))
 	case downloadScreen:
@@ -630,12 +746,32 @@ func (dashboard *Dashboard) actionScreen() string {
 	case storageScreen:
 		return dashboard.wrap(strings.Join([]string{heading, "", "Where should new Ollama models be stored?", "", dashboard.input.View(), dim.Render("Required: an absolute writable directory."), "", "[Enter] Save location   [Esc] Cancel"}, "\n"))
 	case projectScreen:
-		return dashboard.wrap(strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel"}, "\n"))
+		model := dashboard.config.SelectedModel
+		if model == "" {
+			model = "MODEL_NAME"
+		}
+		settings, _ := json.Marshal(map[string]string{"model": "ollama/" + model})
+		quotedSettings := "'" + strings.ReplaceAll(string(settings), "'", "'\"'\"'") + "'"
+		return dashboard.wrap(strings.Join([]string{heading, "", "Folder to open:", "", dashboard.input.View(), "", "[Enter] Start session   [Esc] Cancel", "", dim.Render("Start manually in another terminal:"), dim.Render("  cd -- /path/to/project"), dim.Render("  export OPENCODE_CONFIG_CONTENT=" + quotedSettings), dim.Render("  \"$HOME/.opencode/bin/opencode\" --standalone"), dim.Render("Requires a running Ollama server and an installed model. Replace the folder and model as needed.")}, "\n"))
+	case contextScreen:
+		lines := []string{heading, "", "Choose the maximum context window for the managed Ollama server.", dim.Render("32K uses more memory. Running sessions keep their current setting."), ""}
+		for index, length := range []int{16384, 32768} {
+			marker := "  "
+			if index == dashboard.contextSelected {
+				marker = "› "
+			}
+			label := []string{"16,384 tokens (16K)", "32,768 tokens (32K)"}[index]
+			if length == dashboard.config.ContextLength {
+				label += "  •  Current"
+			}
+			lines = append(lines, marker+label)
+		}
+		return dashboard.wrap(strings.Join(append(lines, "", "[↑/↓] Navigate   [Enter] Save   [Esc] Cancel"), "\n"))
 	case maestroGuideScreen:
 		return dashboard.wrap(strings.Join([]string{
 			heading,
 			"",
-			"Maestro plans and reviews coding tasks. It delegates implementation to your configured local OpenCode and Ollama worker.",
+			"Maestro plans and reviews; OpenCode implements and runs tests.",
 			"",
 			"Codex",
 			"  codex --profile maestro",
@@ -644,7 +780,10 @@ func (dashboard *Dashboard) actionScreen() string {
 			"  claude --agent maestro",
 			"",
 			"Antigravity",
-			"  select the `maestro` agent, then describe the coding task.",
+			"  Use Codex or Claude for worker delegation.",
+			"",
+			"Run from your project folder. Maestro delegates edits and tests to OpenCode.",
+			"Reconnect: Ask Maestro to resume waiting for the saved job ID.",
 			"",
 			"[Enter] Back   [Esc] Back",
 		}, "\n"))
@@ -761,13 +900,15 @@ func (dashboard *Dashboard) screenTitle() string {
 		return "DELETE A MODEL"
 	case storageScreen:
 		return "CONFIGURE MODEL STORAGE"
-	case projectScreen:
+	case projectScreen, launchPreparingScreen:
 		return "START OPENCODE SESSION"
+	case contextScreen:
+		return "CHANGE CONTEXT WINDOW"
 	case downloadScreen:
 		return "DOWNLOADING A MODEL"
 	case confirmScreen:
 		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
-	case resultScreen:
+	case resultScreen, modelLoadingScreen:
 		return strings.ToUpper(actionDefinitions[dashboard.actionIndex(dashboard.pendingAction)].label)
 	case maestroGuideScreen:
 		return "HOW DO I RUN MAESTRO?"
@@ -777,6 +918,8 @@ func (dashboard *Dashboard) screenTitle() string {
 
 func (dashboard *Dashboard) confirmationDescription() string {
 	switch dashboard.pendingAction {
+	case repairSandboxAction:
+		return "Ubuntu only: install apparmor-profiles and apparmor-utils with sudo, copy and load the Bubblewrap AppArmor profile, then verify with codex --profile maestro sandbox -- /usr/bin/true. This changes the system AppArmor profile and may ask for your sudo password. Global user-namespace restrictions are kept enabled."
 	case setupAction:
 		return "Install and configure Ollama for this user. This may request system permission."
 	case startServerAction:
@@ -806,6 +949,9 @@ func (dashboard *Dashboard) actionIndex(target action) int {
 
 func (dashboard *Dashboard) statusPanels(width int) (string, string) {
 	overviewBody := fmt.Sprintf("Server: %s\nSelected: %s\nContext: %d tokens\nStorage: %s", empty(dashboard.snapshot.Server), empty(dashboard.config.SelectedModel), dashboard.config.ContextLength, dashboard.config.ModelDirectory)
+	if dashboard.snapshot.ModelError != "" {
+		overviewBody += "\nModel lookup failed: " + dashboard.snapshot.ModelError
+	}
 	resourcesBody := fmt.Sprintf("%s\nLoaded model VRAM: %s", empty(dashboard.snapshot.GPU), empty(dashboard.snapshot.LoadedVRAM))
 	if dashboard.height >= 19 {
 		if width >= 80 {
