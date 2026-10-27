@@ -68,33 +68,22 @@ var actionDefinitions = []actionDefinition{
 	{label: "Reset local configuration", section: "MAINTENANCE", kind: resetConfigurationAction},
 }
 
-const modelRanking = `Priority: coding-agent reliability, reasoning, fewer refusals, and usable context.
-A = community abliterated (reduced refusals). S = standard.
-Practical starting points only. No listed local model is assumed to match a frontier GPT at High reasoning for difficult, long-horizon tasks.
-
-RTX 4090: 24 GB (best overall)
+const modelRanking = `RTX 4090: 24 GB
 
 1. huihui_ai/Qwen3.8-abliterated:27b  •  A
    Download / installed: 18 GB  •  Reserve free disk: 25 GB  •  Context to test: 16–32K
-   Best first choice for coding and reasoning.
 2. qwen3.8:27b  •  S
    Download / installed: 18 GB  •  Reserve free disk: 25 GB  •  Context to test: 16–32K
-   Compare for stronger instruction following.
 3. huihui_ai/Qwen3.6-abliterated:27b  •  A
    Download / installed: 17 GB  •  Reserve free disk: 24 GB  •  Context to test: 16–32K
-   Alternative uncensored coding agent.
 4. huihui_ai/glm-4.7-flash-abliterated  •  A
    Download / installed: 19 GB  •  Reserve free disk: 27 GB  •  Context to test: 16–32K
-   Fast MoE coding alternative.
 5. qwen3-coder:30b  •  S
    Download / installed: 19 GB  •  Reserve free disk: 27 GB  •  Context to test: 16–32K
-   Code-focused tool execution.
 6. huihui_ai/gpt-oss-abliterated:20b  •  A
    Download / installed: 14 GB  •  Reserve free disk: 20 GB  •  Context to test: 32–64K
-   More headroom for context and reasoning.
 7. gpt-oss:20b  •  S
    Download / installed: 14 GB  •  Reserve free disk: 20 GB  •  Context to test: 32–64K
-   Standard reasoning baseline.
 
 RTX 4070 Ti: 12 GB
 
@@ -107,7 +96,7 @@ RTX 4070 Ti: 12 GB
 4. qwen3.5:9b  •  S
    Download / installed: 6.6–7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 16–32K
 
-RTX 5070: 8 GB (as specified)
+RTX 5070: 8 GB
 
 1. huihui_ai/qwen3.5-abliterated:4B  •  A
    Download / installed: 3.3 GB  •  Reserve free disk: 5 GB  •  Context to test: 16–32K
@@ -116,15 +105,7 @@ RTX 5070: 8 GB (as specified)
 3. huihui_ai/qwen3.5-abliterated:9b  •  A
    Download / installed: 6.6 GB  •  Reserve free disk: 10 GB  •  Context to test: 4–8K, tight fit
 4. qwen3.5:9b  •  S
-   Download / installed: 6.6–7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 4–8K, tight fit
-
-For meaningful autonomous coding on 8 GB, prefer a 4B model with enough context over a heavily memory-constrained 9B model.
-
-Abliteration reduces refusal behavior but does not eliminate all refusals or guarantee code quality. Compare with the standard counterpart before relying on it.
-
-Download / installed is persistent disk footprint after ollama pull, not VRAM. Reserve 30–50% additional disk for pulling and storage overhead. Context ranges are conservative targets to test. Native advertised limits are usually 128K–256K, but KV cache, runtime, parallel requests, and display usage consume additional VRAM.
-
-For multiple installed models, add Download / installed sizes for persistent storage. Also budget for OpenCode, repositories, build dependencies, and test artifacts. On Linux, models normally live in /usr/share/ollama/.ollama/models. Set OLLAMA_MODELS to use a larger SSD. Verify actual use with ollama list and du -sh /usr/share/ollama/.ollama/models.`
+   Download / installed: 6.6–7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 4–8K, tight fit`
 
 type screen int
 

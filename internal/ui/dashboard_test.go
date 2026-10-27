@@ -123,12 +123,17 @@ func TestDashboardShowsGPUModelRankingFromDownloadPicker(t *testing.T) {
 	view := dashboard.View().Content
 	for _, expected := range []string{
 		"MODEL RANKING BY GPU",
-		"RTX 4090: 24 GB (best overall)",
+		"RTX 4090: 24 GB",
 		"huihui_ai/Qwen3.8-abliterated:27b",
 		"[?] or [Esc] Back",
 	} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("GPU ranking missing %q:\n%s", expected, view)
+		}
+	}
+	for _, unexpected := range []string{"Priority: coding-agent reliability", "Best first choice for coding and reasoning", "Compare for stronger instruction following"} {
+		if strings.Contains(view, unexpected) {
+			t.Fatalf("GPU ranking must contain only ranking data, found %q:\n%s", unexpected, view)
 		}
 	}
 	for range 20 {
@@ -142,7 +147,7 @@ func TestDashboardShowsGPUModelRankingFromDownloadPicker(t *testing.T) {
 		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	view = dashboard.View().Content
-	for _, expected := range []string{"RTX 5070: 8 GB (as specified)"} {
+	for _, expected := range []string{"RTX 5070: 8 GB"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("scrolled GPU ranking missing %q:\n%s", expected, view)
 		}
