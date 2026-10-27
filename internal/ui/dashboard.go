@@ -70,42 +70,87 @@ var actionDefinitions = []actionDefinition{
 
 const modelRanking = `RTX 4090: 24 GB
 
-1. huihui_ai/Qwen3.8-abliterated:27b  •  A
-   Download / installed: 18 GB  •  Reserve free disk: 25 GB  •  Context to test: 16–32K
-2. qwen3.8:27b  •  S
-   Download / installed: 18 GB  •  Reserve free disk: 25 GB  •  Context to test: 16–32K
-3. huihui_ai/Qwen3.6-abliterated:27b  •  A
-   Download / installed: 17 GB  •  Reserve free disk: 24 GB  •  Context to test: 16–32K
-4. huihui_ai/glm-4.7-flash-abliterated  •  A
-   Download / installed: 19 GB  •  Reserve free disk: 27 GB  •  Context to test: 16–32K
-5. qwen3-coder:30b  •  S
-   Download / installed: 19 GB  •  Reserve free disk: 27 GB  •  Context to test: 16–32K
-6. huihui_ai/gpt-oss-abliterated:20b  •  A
-   Download / installed: 14 GB  •  Reserve free disk: 20 GB  •  Context to test: 32–64K
-7. gpt-oss:20b  •  S
-   Download / installed: 14 GB  •  Reserve free disk: 20 GB  •  Context to test: 32–64K
+1. huihui_ai/Qwen3.8-abliterated:27b
+   Download: 18 GB
+   Disk necessary: 25 GB
+   VRAM required: 24 GB
+   Context: 16–32K
+2. qwen3.8:27b
+   Download: 18 GB
+   Disk necessary: 25 GB
+   VRAM required: 24 GB
+   Context: 16–32K
+3. huihui_ai/Qwen3.6-abliterated:27b
+   Download: 17 GB
+   Disk necessary: 24 GB
+   VRAM required: 24 GB
+   Context: 16–32K
+4. huihui_ai/glm-4.7-flash-abliterated
+   Download: 19 GB
+   Disk necessary: 27 GB
+   VRAM required: 24 GB
+   Context: 16–32K
+5. qwen3-coder:30b
+   Download: 19 GB
+   Disk necessary: 27 GB
+   VRAM required: 24 GB
+   Context: 16–32K
+6. huihui_ai/gpt-oss-abliterated:20b
+   Download: 14 GB
+   Disk necessary: 20 GB
+   VRAM required: 24 GB
+   Context: 32–64K
+7. gpt-oss:20b
+   Download: 14 GB
+   Disk necessary: 20 GB
+   VRAM required: 24 GB
+   Context: 32–64K
 
 RTX 4070 Ti: 12 GB
 
-1. huihui_ai/gemma-4-abliterated:12b  •  A
-   Download / installed: 7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 16–32K
-2. gemma4:12b  •  S
-   Download / installed: 7.7–8.0 GB  •  Reserve free disk: 12 GB  •  Context to test: 16–32K
-3. huihui_ai/qwen3.5-abliterated:9b  •  A
-   Download / installed: 6.6 GB  •  Reserve free disk: 10 GB  •  Context to test: 16–32K
-4. qwen3.5:9b  •  S
-   Download / installed: 6.6–7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 16–32K
+1. huihui_ai/gemma-4-abliterated:12b
+   Download: 7.6 GB
+   Disk necessary: 11 GB
+   VRAM required: 12 GB
+   Context: 16–32K
+2. gemma4:12b
+   Download: 7.7–8.0 GB
+   Disk necessary: 12 GB
+   VRAM required: 12 GB
+   Context: 16–32K
+3. huihui_ai/qwen3.5-abliterated:9b
+   Download: 6.6 GB
+   Disk necessary: 10 GB
+   VRAM required: 12 GB
+   Context: 16–32K
+4. qwen3.5:9b
+   Download: 6.6–7.6 GB
+   Disk necessary: 11 GB
+   VRAM required: 12 GB
+   Context: 16–32K
 
 RTX 5070: 8 GB
 
-1. huihui_ai/qwen3.5-abliterated:4B  •  A
-   Download / installed: 3.3 GB  •  Reserve free disk: 5 GB  •  Context to test: 16–32K
-2. qwen3.5:4b  •  S
-   Download / installed: 3.3–4.0 GB  •  Reserve free disk: 6 GB  •  Context to test: 16–32K
-3. huihui_ai/qwen3.5-abliterated:9b  •  A
-   Download / installed: 6.6 GB  •  Reserve free disk: 10 GB  •  Context to test: 4–8K, tight fit
-4. qwen3.5:9b  •  S
-   Download / installed: 6.6–7.6 GB  •  Reserve free disk: 11 GB  •  Context to test: 4–8K, tight fit`
+1. huihui_ai/qwen3.5-abliterated:4B
+   Download: 3.3 GB
+   Disk necessary: 5 GB
+   VRAM required: 8 GB
+   Context: 16–32K
+2. qwen3.5:4b
+   Download: 3.3–4.0 GB
+   Disk necessary: 6 GB
+   VRAM required: 8 GB
+   Context: 16–32K
+3. huihui_ai/qwen3.5-abliterated:9b
+   Download: 6.6 GB
+   Disk necessary: 10 GB
+   VRAM required: 8 GB
+   Context: 4–8K, tight fit
+4. qwen3.5:9b
+   Download: 6.6–7.6 GB
+   Disk necessary: 11 GB
+   VRAM required: 8 GB
+   Context: 4–8K, tight fit`
 
 type screen int
 
@@ -538,7 +583,7 @@ func (dashboard *Dashboard) actionScreen() string {
 
 func (dashboard *Dashboard) rankingView() string {
 	heading := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75")).Render("MODEL RANKING BY GPU")
-	content := dashboard.wrap(modelRanking)
+	content := dashboard.wrap(styleRanking(modelRanking))
 	window := viewport.New(viewport.WithWidth(dashboard.width), viewport.WithHeight(max(1, dashboard.height-5)))
 	window.SetContent(content)
 	window.SetYOffset(dashboard.rankingOffset)
@@ -554,6 +599,24 @@ func (dashboard *Dashboard) rankingView() string {
 		lines = append(lines, indicator.Render(fmt.Sprintf("↓ %d more", max(1, hiddenLines))))
 	}
 	lines = append(lines, "", "[↑/↓] Scroll   [?] or [Esc] Back")
+	return strings.Join(lines, "\n")
+}
+
+func styleRanking(ranking string) string {
+	groupStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
+	nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+	descriptionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	lines := strings.Split(ranking, "\n")
+	for index, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "RTX "):
+			lines[index] = groupStyle.Render(line)
+		case len(line) > 3 && line[1] == '.' && line[2] == ' ':
+			lines[index] = line[:3] + nameStyle.Render(line[3:])
+		case strings.HasPrefix(line, "   "):
+			lines[index] = line[:3] + descriptionStyle.Render(line[3:])
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 

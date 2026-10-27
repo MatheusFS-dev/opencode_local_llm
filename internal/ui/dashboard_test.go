@@ -136,12 +136,32 @@ func TestDashboardShowsGPUModelRankingFromDownloadPicker(t *testing.T) {
 			t.Fatalf("GPU ranking must contain only ranking data, found %q:\n%s", unexpected, view)
 		}
 	}
-	for range 20 {
+	for _, expected := range []string{
+		lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Render("huihui_ai/Qwen3.8-abliterated:27b"),
+		"\x1b[38;5;244mDownload: 18 GB",
+		"Disk necessary: 25 GB",
+		"VRAM required: 24 GB",
+		"Context: 16–32K",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("GPU ranking missing formatted field %q:\n%s", expected, view)
+		}
+	}
+	verticalFields := regexp.MustCompile(`(?s)\x1b\[38;5;244mDownload: 18 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mDisk necessary: 25 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mVRAM required: 24 GB\x1b\[m[^\n]*\n   \x1b\[38;5;244mContext: 16–32K\x1b\[m`)
+	if !verticalFields.MatchString(view) {
+		t.Fatalf("GPU ranking must render model requirements as a vertical list:\n%s", view)
+	}
+	for _, unexpected := range []string{" •  A", " •  S", "Context to test:"} {
+		if strings.Contains(view, unexpected) {
+			t.Fatalf("GPU ranking contains removed format %q:\n%s", unexpected, view)
+		}
+	}
+	for range 40 {
 		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	view = dashboard.View().Content
-	if !strings.Contains(view, "RTX 4070 Ti: 12 GB") {
-		t.Fatalf("scrolled GPU ranking missing RTX 4070 Ti: 12 GB:\n%s", view)
+	if !strings.Contains(view, "huihui_ai/gemma-4-abliterated:12b") {
+		t.Fatalf("scrolled GPU ranking missing the RTX 4070 Ti entries:\n%s", view)
 	}
 	for range 20 {
 		dashboard.Update(tea.KeyPressMsg{Code: tea.KeyDown})
